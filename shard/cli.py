@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -495,7 +496,6 @@ def model(ctx: click.Context) -> None:
     if ctx.invoked_subcommand is not None:
         return
     # Show current model status
-    from shard.models import MODEL_CATALOG, list_models  # noqa: F401
 
     try:
         config = get_config()
@@ -580,6 +580,7 @@ def model_use(model_name: str) -> None:
         MODEL_CATALOG,
         PROVIDER_ENV_MAP,
         PROVIDER_KEY_URLS,
+        _detect_provider,
         detect_available_models,
         pull_ollama_model,
     )
@@ -609,12 +610,11 @@ def model_use(model_name: str) -> None:
                 _err.print(f"[yellow]Aborted.[/yellow] Pull manually: ollama pull {short_name}")
                 sys.exit(0)
     else:
-        # Check if cloud model needs an API key
+        # Check if cloud model needs an API key (catalog or heuristic)
         catalog_entry = next((e for e in MODEL_CATALOG if e["name"] == model_name), None)
-        provider = catalog_entry["provider"] if catalog_entry else None
+        provider = catalog_entry["provider"] if catalog_entry else _detect_provider(model_name)
 
         if provider and provider in PROVIDER_ENV_MAP:
-            import os
             env_var = PROVIDER_ENV_MAP[provider]
             has_key = bool(config.api_keys.get(provider)) or bool(os.environ.get(env_var))
 
@@ -693,7 +693,7 @@ def model_key(provider: str | None, list_keys: bool, remove_provider: str | None
         for prov in sorted(PROVIDER_ENV_MAP.keys()):
             key = config.api_keys.get(prov, "")
             if key:
-                masked = key[:6] + "..." + key[-5:] if len(key) > 14 else key[:3] + "..."
+                masked = key[:6] + "..." + key[-5:] if len(key) > 20 else key[:3] + "..."
                 table.add_row(prov, masked, "[green]✓[/green]")
             else:
                 table.add_row(prov, "not set", "[dim]—[/dim]")
@@ -705,7 +705,6 @@ def model_key(provider: str | None, list_keys: bool, remove_provider: str | None
 
     # --remove: delete a key
     if remove_provider:
-        import os
         env_var = PROVIDER_ENV_MAP.get(remove_provider)
         if remove_provider in config.api_keys:
             del config.api_keys[remove_provider]
@@ -748,7 +747,6 @@ def model_key(provider: str | None, list_keys: bool, remove_provider: str | None
     config.api_keys[provider] = key
     save_config(config)
 
-    import os
     env_var = PROVIDER_ENV_MAP[provider]
     os.environ[env_var] = key
 

@@ -754,6 +754,98 @@ class TestModelKey:
         assert key_after == "REMOVED"
 
 
+# ── TestModelPull ─────────────────────────────────────────────────────────────
+
+
+class TestModelPull:
+    """Tests for ``shard model pull <model>``."""
+
+    def test_pull_strips_prefix_and_calls_pull(self, tmp_path: Path) -> None:
+        runner = CliRunner()
+        config = _make_config(tmp_path)
+        fake_config_path = tmp_path / "config.json"
+        fake_config_path.write_text("{}", encoding="utf-8")
+
+        with (
+            patch("shard.cli.CONFIG_PATH", fake_config_path),
+            patch("shard.cli.get_config", return_value=config),
+            patch("shard.cli.save_config"),
+            patch("shard.models.pull_ollama_model", return_value=True) as mock_pull,
+        ):
+            result = runner.invoke(cli, ["model", "pull", "ollama_chat/llama3.1:8b"], input="y\n")
+
+        mock_pull.assert_called_once_with("llama3.1:8b")
+        assert result.exit_code == 0
+
+    def test_pull_bare_name_works(self, tmp_path: Path) -> None:
+        runner = CliRunner()
+        config = _make_config(tmp_path)
+        fake_config_path = tmp_path / "config.json"
+        fake_config_path.write_text("{}", encoding="utf-8")
+
+        with (
+            patch("shard.cli.CONFIG_PATH", fake_config_path),
+            patch("shard.cli.get_config", return_value=config),
+            patch("shard.cli.save_config"),
+            patch("shard.models.pull_ollama_model", return_value=True) as mock_pull,
+        ):
+            result = runner.invoke(cli, ["model", "pull", "phi3.5"], input="y\n")
+
+        mock_pull.assert_called_once_with("phi3.5")
+        assert result.exit_code == 0
+
+    def test_pull_failure_exits_nonzero(self, tmp_path: Path) -> None:
+        runner = CliRunner()
+        config = _make_config(tmp_path)
+        fake_config_path = tmp_path / "config.json"
+        fake_config_path.write_text("{}", encoding="utf-8")
+
+        with (
+            patch("shard.cli.CONFIG_PATH", fake_config_path),
+            patch("shard.models.pull_ollama_model", return_value=False),
+        ):
+            result = runner.invoke(cli, ["model", "pull", "bad-model"])
+
+        assert result.exit_code == 1
+        assert "Failed" in result.output
+
+    def test_pull_success_prompts_set_default(self, tmp_path: Path) -> None:
+        runner = CliRunner()
+        config = _make_config(tmp_path)
+        fake_config_path = tmp_path / "config.json"
+        fake_config_path.write_text("{}", encoding="utf-8")
+
+        with (
+            patch("shard.cli.CONFIG_PATH", fake_config_path),
+            patch("shard.cli.get_config", return_value=config),
+            patch("shard.cli.save_config") as mock_save,
+            patch("shard.models.pull_ollama_model", return_value=True),
+        ):
+            result = runner.invoke(cli, ["model", "pull", "qwen2.5:14b"], input="y\n")
+
+        assert result.exit_code == 0
+        assert config.model == "ollama_chat/qwen2.5:14b"
+        mock_save.assert_called_once()
+
+    def test_pull_decline_default_does_not_change_model(self, tmp_path: Path) -> None:
+        runner = CliRunner()
+        config = _make_config(tmp_path)
+        original_model = config.model
+        fake_config_path = tmp_path / "config.json"
+        fake_config_path.write_text("{}", encoding="utf-8")
+
+        with (
+            patch("shard.cli.CONFIG_PATH", fake_config_path),
+            patch("shard.cli.get_config", return_value=config),
+            patch("shard.cli.save_config"),
+            patch("shard.models.pull_ollama_model", return_value=True),
+        ):
+            result = runner.invoke(cli, ["model", "pull", "phi3.5"], input="n\n")
+
+        assert result.exit_code == 0
+        assert config.model == original_model
+
+
 # ── TestAuthError ─────────────────────────────────────────────────────────────
 
 

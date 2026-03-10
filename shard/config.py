@@ -160,6 +160,7 @@ def save_config(config: ShardConfig, path: Path = CONFIG_PATH) -> None:
             json.dumps(_config_to_dict(config), indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
+        path.chmod(0o600)
     except OSError as exc:
         raise ConfigError(f"Cannot write config file {path}: {exc}") from exc
 
