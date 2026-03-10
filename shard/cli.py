@@ -161,6 +161,137 @@ def index() -> None:
     _out.print(f"\n[bold green]Reindex complete.[/bold green] Total chunks: [bold]{total}[/bold]")
 
 
+# ── learn ─────────────────────────────────────────────────────────────────────
+
+STYLE_PROFILE_PATH = Path.home() / ".shard" / "style.json"
+
+
+@cli.command("learn")
+@click.option("--force", is_flag=True, default=False, help="Re-analyze even if a style profile exists.")
+@click.option("--show", "show_profile", is_flag=True, default=False, help="Print current style fingerprint.")
+@click.option("--template", "show_template", is_flag=True, default=False, help="Print the blank note template.")
+def learn(force: bool, show_profile: bool, show_template: bool) -> None:
+    """Learn your note-writing style from existing vault notes.
+
+    Analyzes your vault and saves a style profile so future notes from
+    shard add match your writing style exactly.
+    """
+    from shard.pipeline.learner import Learner, load_style_profile, save_style_profile
+    from shard.vault import read_note, walk_vault
+
+    # --show: display current fingerprints
+    if show_profile:
+        profile = load_style_profile(STYLE_PROFILE_PATH)
+        if profile is None:
+            _err.print("[yellow]No style profile found.[/yellow] Run [bold]shard learn[/bold] first.")
+            sys.exit(1)
+        _print_style_summary(profile)
+        return
+
+    # --template: display blank note template
+    if show_template:
+        profile = load_style_profile(STYLE_PROFILE_PATH)
+        if profile is None:
+            _err.print("[yellow]No style profile found.[/yellow] Run [bold]shard learn[/bold] first.")
+            sys.exit(1)
+        _out.print(profile.template)
+        return
+
+    # Check for existing profile
+    if not force and STYLE_PROFILE_PATH.exists():
+        _err.print(
+            "[yellow]Style profile already exists.[/yellow] "
+            "Use [bold]--force[/bold] to re-analyze."
+        )
+        profile = load_style_profile(STYLE_PROFILE_PATH)
+        if profile:
+            _print_style_summary(profile)
+        return
+
+    import random
+
+    from shard.pipeline.learner import MAX_SAMPLE_SIZE
+
+    try:
+        config = get_config()
+        with _err.status("[bold cyan]Sampling vault notes…[/bold cyan]", spinner="dots"):
+            paths = walk_vault(config)
+            notes = []
+            for p in paths:
+                try:
+                    notes.append(read_note(p))
+                except ShardError:
+                    continue
+
+        if len(notes) < 5:
+            _err.print(
+                f"[yellow]Not enough notes to learn style (found {len(notes)}, need 5+).[/yellow]\n"
+                "Add some notes first, then re-run [bold]shard learn[/bold]."
+            )
+            sys.exit(1)
+
+        # Sample with random spread
+        if len(notes) > MAX_SAMPLE_SIZE:
+            sampled = random.sample(notes, MAX_SAMPLE_SIZE)
+        else:
+            sampled = list(notes)
+
+        _err.print(
+            f"[green]●[/green] Sampling vault notes...        "
+            f"[green]✓[/green] ({len(sampled)} notes sampled)"
+        )
+
+        learner = Learner()
+
+        # Pass 1 with progress
+        with _err.status(
+            f"[bold cyan]● Pass 1: Analyzing structure… 0/{len(sampled)}[/bold cyan]",
+            spinner="dots",
+        ):
+            pass1_results = learner._pass1_extract(sampled)
+
+        _err.print(
+            f"[green]●[/green] Pass 1: Analyzing structure... "
+            f"[green]✓[/green] {len(pass1_results)}/{len(pass1_results)}"
+        )
+
+        # Pass 2
+        with _err.status("[bold cyan]● Pass 2: Synthesizing style…[/bold cyan]", spinner="dots"):
+            profile = learner._pass2_synthesize(pass1_results, len(pass1_results))
+
+        _err.print("[green]●[/green] Pass 2: Synthesizing style...  [green]✓[/green]")
+
+        save_style_profile(profile, STYLE_PROFILE_PATH)
+        _err.print("[green]●[/green] Style profile saved            [green]✓[/green]")
+
+    except ShardError as exc:
+        _err.print(f"[bold red]Error:[/bold red] {exc}")
+        sys.exit(1)
+
+    _out.print()
+    _print_style_summary(profile)
+    _out.print(f"\n  Average note length: ~{profile.avg_word_count} words")
+    _out.print("  Future notes will match your style exactly.")
+    _out.print("  Re-run [bold]shard learn[/bold] anytime to update.")
+
+
+def _print_style_summary(profile: "StyleProfile") -> None:  # noqa: F821
+    """Print a rich panel showing the style fingerprint."""
+    from rich.panel import Panel
+
+    lines = []
+    for i, fp in enumerate(profile.fingerprints, 1):
+        lines.append(f"  {i}. {fp}")
+    content = "\n".join(lines)
+
+    panel = Panel(
+        content,
+        title="[bold]📝 Your note fingerprint[/bold]",
+        expand=False,
+    )
+    _out.print(panel)
+
+
 # ── list ──────────────────────────────────────────────────────────────────────
 
 
