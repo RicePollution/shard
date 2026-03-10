@@ -16,6 +16,7 @@ from shard.pipeline import LearnError
 logger = logging.getLogger(__name__)
 
 MAX_SAMPLE_SIZE = 20
+QUICK_SAMPLE_SIZE = 5
 
 
 @dataclass
@@ -37,11 +38,12 @@ class StyleProfile:
 class Learner:
     """Analyzes vault notes to extract the user's writing style."""
 
-    def analyze(self, notes: list[str]) -> StyleProfile:
-        """Run two-pass style analysis on vault notes.
+    def analyze(self, notes: list[str], depth: str = "normal") -> StyleProfile:
+        """Run style analysis on vault notes.
 
         Args:
             notes: List of raw markdown note contents from the vault.
+            depth: Analysis depth — "quick", "normal", or "deep".
 
         Returns:
             A StyleProfile capturing the user's writing patterns.
@@ -55,11 +57,24 @@ class Learner:
                 "Add more notes first, then re-run shard learn."
             )
 
-        # Sample up to MAX_SAMPLE_SIZE notes with random spread
-        if len(notes) > MAX_SAMPLE_SIZE:
-            sampled = random.sample(notes, MAX_SAMPLE_SIZE)
-        else:
+        if depth == "quick":
+            # Sample 5 notes, skip Pass 1, single Pass 2 call
+            if len(notes) > QUICK_SAMPLE_SIZE:
+                sampled = random.sample(notes, QUICK_SAMPLE_SIZE)
+            else:
+                sampled = list(notes)
+            profile = self._quick_synthesize(sampled)
+            return profile
+
+        if depth == "deep":
+            # Use ALL notes — no sampling cap
             sampled = list(notes)
+        else:
+            # Normal: sample up to MAX_SAMPLE_SIZE
+            if len(notes) > MAX_SAMPLE_SIZE:
+                sampled = random.sample(notes, MAX_SAMPLE_SIZE)
+            else:
+                sampled = list(notes)
 
         # PASS 1: Per-note structural extraction
         pass1_results = self._pass1_extract(sampled)
@@ -123,6 +138,68 @@ class Learner:
             results.append(parsed)
 
         return results
+
+    def _quick_synthesize(self, notes: list[str]) -> StyleProfile:
+        """Single-pass style synthesis for quick depth mode.
+
+        Skips Pass 1 and sends all notes directly to a synthesis prompt.
+
+        Args:
+            notes: Sampled note contents (typically 5).
+
+        Returns:
+            A StyleProfile from direct synthesis.
+
+        Raises:
+            LearnError: If model call or JSON parsing fails.
+        """
+        notes_block = "\n\n---\n\n".join(
+            f"NOTE {i+1}:\n{note[:2000]}" for i, note in enumerate(notes)
+        )
+
+        prompt = (
+            f"You are analyzing {len(notes)} complete notes from a personal "
+            "Obsidian vault. Rather than per-note structural analysis, "
+            "synthesize the writing style directly from these examples.\n\n"
+            f"{notes_block}\n\n"
+            "Synthesize into:\n\n"
+            "1. A STYLE RULES document — concrete rules a writer must follow "
+            "to match this vault. Be specific.\n\n"
+            "2. A TEMPLATE — a complete blank note skeleton in their exact style.\n\n"
+            "3. A STYLE FINGERPRINT — 5-8 one-line rules that are the most "
+            "distinctive things about how this person writes.\n\n"
+            "Return ONLY a JSON object:\n"
+            "{\n"
+            '  "style_rules": "full markdown style rules document",\n'
+            '  "template": "complete blank note template in their format",\n'
+            '  "fingerprints": ["list of 5-8 specific one-line rules"],\n'
+            '  "frontmatter_template": "exact frontmatter block to use",\n'
+            '  "heading_order": ["typical heading sequence if consistent"],\n'
+            '  "tag_format": "exact format e.g. #lowercase-hyphen",\n'
+            '  "avg_word_count": 0,\n'
+            '  "tone_examples": ["2-3 verbatim sentence examples from notes"]\n'
+            "}"
+        )
+
+        try:
+            response = complete(prompt)
+        except Exception as exc:
+            raise LearnError(f"Model call failed during quick synthesis: {exc}") from exc
+
+        data = _parse_json_response(response)
+
+        return StyleProfile(
+            style_rules=data.get("style_rules", ""),
+            template=data.get("template", ""),
+            fingerprints=data.get("fingerprints", []),
+            frontmatter_template=data.get("frontmatter_template", ""),
+            heading_order=data.get("heading_order", []),
+            tag_format=data.get("tag_format", ""),
+            avg_word_count=int(data.get("avg_word_count", 0)),
+            tone_examples=data.get("tone_examples", []),
+            analyzed_at=datetime.now(tz=timezone.utc).isoformat(),
+            notes_sampled=len(notes),
+        )
 
     def _pass2_synthesize(
         self, pass1_results: list[dict[str, Any]], notes_sampled: int
