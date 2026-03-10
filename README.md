@@ -17,6 +17,9 @@ Shard ingests PDFs, URLs, YouTube videos, and text into your Obsidian vault as s
 - 📝 Native Obsidian integration with YAML frontmatter
 - 🔌 Flexible model support via LiteLLM (Ollama, OpenAI, Anthropic, Groq, etc.)
 - ⚡ Fuzzy note search and one-click Obsidian opening
+- 🧠 **Learn your style** — analyzes your vault and writes new notes that match how you already write
+- 🔗 **Auto backlinks** — syncs [[wikilinks]] across your vault to build a rich knowledge graph
+- 📁 **Flat file saving** — notes save directly to your vault root, no buried subfolders
 
 ## 📋 Prerequisites
 
@@ -526,6 +529,52 @@ shard index
 
 Reindex all notes. Run after manual edits or to rebuild the search index.
 
+### `shard learn`
+
+Analyzes your existing notes to learn your exact writing style —
+headings, tags, frontmatter, tone, structure. Future notes from
+`shard add` will be written to match your vault natively.
+
+```bash
+shard learn               # analyze vault and save style profile
+shard learn --force       # re-analyze even if profile exists
+shard learn --show        # print current style fingerprint
+shard learn --template    # print your blank note template
+```
+
+Example output:
+```
+📝 Your note fingerprint:
+┌─────────────────────────────────────────────────────┐
+│ 1. Always opens with a one-sentence TL;DR in bold   │
+│ 2. Uses ## TL;DR, ## Notes, ## Links as headings    │
+│ 3. Tags: #lowercase-hyphen, 3-5 per note            │
+│ 4. Frontmatter: tags, date, source                  │
+│ 5. Ends every note with ## Related                  │
+└─────────────────────────────────────────────────────┘
+Average note length: ~320 words
+```
+
+### `shard sync`
+
+Scans your vault and adds [[wikilinks]] between related notes.
+Makes your Obsidian graph view much more connected and useful.
+Always creates a backup before making any changes.
+
+```bash
+shard sync                # sync all backlinks
+shard sync --dry-run      # preview links without changing files
+shard sync --verbose      # show each link as it's added
+```
+
+Example output:
+```
+✓ Sync complete
+  Notes updated:  34
+  Links added:    127
+  Backup saved:   ~/.shard/backups/2024-01-15T14:32:00/
+```
+
 ### `shard list`
 
 ```bash
@@ -673,6 +722,8 @@ After running the above commands, restart your terminal for the changes to take 
 | `embedding_model` | `all-MiniLM-L6-v2` | Sentence-transformers model for embeddings |
 | `custom_models` | `[]` | User-registered model descriptors |
 | `api_keys` | `{}` | Provider API keys (alternative to env vars) |
+| `notes_subfolder` | `""` (vault root) | Where new notes are saved |
+| `style_profile` | auto-managed | Path to learned style JSON |
 
 ## 🏗️ How It Works
 
@@ -782,6 +833,27 @@ If you get permission errors on Linux:
 
 ```bash
 chmod +x ~/.local/bin/shard
+```
+
+</details>
+
+<details>
+<summary>❌ shard learn says not enough notes</summary>
+
+shard learn needs at least 5 notes in your vault to analyze.
+Add some notes first with `shard add`, then re-run `shard learn`.
+
+</details>
+
+<details>
+<summary>❌ shard sync changed something it shouldn't have</summary>
+
+shard sync always creates a backup before making changes.
+Find your backup at `~/.shard/backups/` and restore from there.
+
+To preview changes without modifying files, always use:
+```bash
+shard sync --dry-run
 ```
 
 </details>
