@@ -221,11 +221,12 @@ def _parse_json_response(response: str) -> dict[str, Any]:
     # Strip markdown code fences if present
     if text.startswith("```"):
         # Remove opening fence (```json or ```)
-        first_newline = text.index("\n")
-        text = text[first_newline + 1:]
-        # Remove closing fence
-        if text.endswith("```"):
-            text = text[:-3].strip()
+        newline_idx = text.find("\n")
+        if newline_idx != -1:
+            text = text[newline_idx + 1:]
+            # Remove closing fence
+            if text.endswith("```"):
+                text = text[:-3].strip()
 
     # Try to find JSON object boundaries
     start = text.find("{")

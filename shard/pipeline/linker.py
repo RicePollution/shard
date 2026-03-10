@@ -162,8 +162,9 @@ def _parse_link_response(response: str) -> list[LinkSuggestion]:
 
     # Strip markdown code fences
     if text.startswith("```"):
-        first_newline = text.index("\n")
-        text = text[first_newline + 1:]
+        newline_idx = text.find("\n")
+        if newline_idx != -1:
+            text = text[newline_idx + 1:]
         if text.endswith("```"):
             text = text[:-3].strip()
 

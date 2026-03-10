@@ -312,7 +312,9 @@ def sync(dry_run: bool, vault_override: str | None, verbose: bool) -> None:
     from shard.vault import parse_frontmatter, read_note, walk_vault
 
     try:
-        config = get_config()
+        import copy
+
+        config = copy.copy(get_config())
         if vault_override:
             config.vault_path = Path(vault_override).expanduser().resolve()
 
@@ -378,8 +380,12 @@ def sync(dry_run: bool, vault_override: str | None, verbose: bool) -> None:
             if new_content == content:
                 continue
 
-            actual_links = len(suggestions)
-            links_added += actual_links
+            # Count actual substitutions by checking which suggestions matched
+            actual_count = sum(
+                1 for s in suggestions
+                if s.linked_text in new_content
+            )
+            links_added += actual_count
             notes_updated += 1
 
             if verbose:
@@ -638,6 +644,12 @@ def _handle_config_set(raw: str) -> None:
     # Coerce Path fields.
     if key in ("vault_path", "chroma_path"):
         coerced: object = Path(value).expanduser().resolve()
+    elif key == "notes_subfolder" and ".." in value:
+        _err.print(
+            "[bold red]Error:[/bold red] notes_subfolder must not contain '..' "
+            "(path traversal is not allowed)."
+        )
+        sys.exit(1)
     else:
         coerced = value
 
