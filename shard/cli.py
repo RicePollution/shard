@@ -481,6 +481,283 @@ def sync(dry_run: bool, vault_override: str | None, verbose: bool) -> None:
         _out.print(f"  Backup saved:   {backup_dir}")
 
 
+# ── model ─────────────────────────────────────────────────────────────────────
+
+
+@cli.group("model", invoke_without_command=True)
+@click.pass_context
+def model(ctx: click.Context) -> None:
+    """Manage models and API keys.
+
+    With no subcommand, shows the current model and available options.
+    See also: shard config --set model=<model>
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+    # Show current model status
+    from shard.models import MODEL_CATALOG, list_models  # noqa: F401
+
+    try:
+        config = get_config()
+    except ShardError as exc:
+        _err.print(f"[bold red]Error:[/bold red] {exc}")
+        sys.exit(1)
+
+    _out.print()
+    _out.print(f"  [bold]Current model:[/bold] {config.model or '[dim](not set)[/dim]'}")
+    _out.print()
+    _out.print("  [dim]Switch model:[/dim]    shard model use <model>")
+    _out.print("  [dim]Pull model:[/dim]     shard model pull <model>")
+    _out.print("  [dim]Add API key:[/dim]    shard model key <provider>")
+    _out.print("  [dim]List all:[/dim]       shard model list")
+    _out.print()
+
+
+@model.command("list")
+def model_list() -> None:
+    """Show all available models grouped by tier."""
+    from shard.models import list_models
+
+    try:
+        models = list_models()
+    except ShardError as exc:
+        _err.print(f"[bold red]Error:[/bold red] {exc}")
+        sys.exit(1)
+
+    tiers = {
+        "local_small": ("Local Small", "Free, ~4GB RAM", "green"),
+        "local_large": ("Local Large", "Free, 8GB+ RAM", "yellow"),
+        "cloud": ("Cloud", "API key required", "blue"),
+    }
+
+    _out.print()
+    for tier_key, (tier_name, tier_desc, color) in tiers.items():
+        tier_models = [m for m in models if m["tier"] == tier_key]
+        if not tier_models:
+            continue
+
+        _out.print(f"  [{color}]●[/{color}] [bold]{tier_name}[/bold] [dim]({tier_desc})[/dim]")
+        for m in tier_models:
+            prefix = "  ▶ " if m["current"] else "    "
+
+            # Status indicators
+            status_parts = []
+            if m["current"]:
+                status_parts.append("[bold green]current[/bold green]")
+
+            if m["provider"] == "ollama":
+                if m.get("pulled"):
+                    prefix_mark = "✓ " if not m["current"] else "✓ "
+                else:
+                    prefix_mark = "  "
+                    status_parts.append("[dim]not pulled[/dim]")
+            else:
+                prefix_mark = "  "
+                if m.get("has_key"):
+                    status_parts.append("[green]key set[/green]")
+                else:
+                    status_parts.append("[dim]no key[/dim]")
+                if m.get("free"):
+                    status_parts.append("[dim]free[/dim]")
+
+            status = ", ".join(status_parts)
+            status_str = f"  [{status}]" if status else ""
+
+            _out.print(f"  {prefix}{prefix_mark}{m['name']:<35s}{status_str}")
+        _out.print()
+
+    _out.print("  [dim]To pull a local model:   shard model pull <name>[/dim]")
+    _out.print("  [dim]To add an API key:       shard model key <provider>[/dim]")
+    _out.print("  [dim]To switch model:         shard model use <name>[/dim]")
+    _out.print()
+
+
+@model.command("use")
+@click.argument("model_name", metavar="MODEL")
+def model_use(model_name: str) -> None:
+    """Switch to a different model."""
+    from shard.models import (
+        MODEL_CATALOG,
+        PROVIDER_ENV_MAP,
+        PROVIDER_KEY_URLS,
+        detect_available_models,
+        pull_ollama_model,
+    )
+
+    try:
+        config = get_config()
+    except ShardError as exc:
+        _err.print(f"[bold red]Error:[/bold red] {exc}")
+        sys.exit(1)
+
+    # Check if it's an Ollama model
+    is_ollama = model_name.startswith("ollama_chat/") or model_name.startswith("ollama/")
+
+    if is_ollama:
+        # Check if pulled
+        detected = detect_available_models()
+        if model_name not in detected:
+            short_name = model_name.replace("ollama_chat/", "").replace("ollama/", "")
+            if click.confirm(f"'{short_name}' is not pulled yet. Pull it now?", default=True):
+                success = pull_ollama_model(short_name)
+                if not success:
+                    _err.print("[bold red]Pull failed.[/bold red] Try manually: "
+                             f"ollama pull {short_name}")
+                    sys.exit(1)
+                _err.print(f"[green]✓[/green] Pulled {short_name}")
+            else:
+                _err.print(f"[yellow]Aborted.[/yellow] Pull manually: ollama pull {short_name}")
+                sys.exit(0)
+    else:
+        # Check if cloud model needs an API key
+        catalog_entry = next((e for e in MODEL_CATALOG if e["name"] == model_name), None)
+        provider = catalog_entry["provider"] if catalog_entry else None
+
+        if provider and provider in PROVIDER_ENV_MAP:
+            import os
+            env_var = PROVIDER_ENV_MAP[provider]
+            has_key = bool(config.api_keys.get(provider)) or bool(os.environ.get(env_var))
+
+            if not has_key:
+                url = PROVIDER_KEY_URLS.get(provider, "")
+                if click.confirm(
+                    f"'{model_name}' requires a {provider} API key. Add it now?",
+                    default=True,
+                ):
+                    key = click.prompt(f"  {provider} API key", hide_input=True)
+                    if not key.strip():
+                        _err.print("[bold red]Error:[/bold red] Key cannot be empty.")
+                        sys.exit(1)
+                    config.api_keys[provider] = key.strip()
+                    os.environ[env_var] = key.strip()
+                else:
+                    _err.print(f"[yellow]Aborted.[/yellow] Add key with: shard model key {provider}")
+                    sys.exit(0)
+
+    config.model = model_name
+    save_config(config)
+    _err.print(f"[green]✓[/green] Switched to [bold]{model_name}[/bold]")
+
+
+@model.command("pull")
+@click.argument("model_name", metavar="MODEL")
+def model_pull(model_name: str) -> None:
+    """Pull an Ollama model."""
+    from shard.models import pull_ollama_model
+
+    # Strip ollama_chat/ prefix if user included it
+    short_name = model_name.replace("ollama_chat/", "").replace("ollama/", "")
+
+    _err.print(f"[dim]Pulling {short_name} from Ollama…[/dim]")
+    success = pull_ollama_model(short_name)
+
+    if not success:
+        _err.print(f"[bold red]Failed to pull {short_name}.[/bold red]")
+        sys.exit(1)
+
+    _err.print(f"[green]✓[/green] Pulled {short_name}")
+
+    full_name = f"ollama_chat/{short_name}"
+    if click.confirm(f"Set {short_name} as your default model?", default=True):
+        try:
+            config = get_config()
+            config.model = full_name
+            save_config(config)
+            _err.print(f"[green]✓[/green] Default model set to [bold]{full_name}[/bold]")
+        except ShardError as exc:
+            _err.print(f"[bold red]Error:[/bold red] {exc}")
+            sys.exit(1)
+
+
+@model.command("key")
+@click.argument("provider", required=False, default=None)
+@click.option("--list", "list_keys", is_flag=True, default=False, help="Show all configured API keys.")
+@click.option("--remove", "remove_provider", default=None, metavar="PROVIDER", help="Remove a provider's API key.")
+def model_key(provider: str | None, list_keys: bool, remove_provider: str | None) -> None:
+    """Add or update an API key for a cloud provider."""
+    from shard.models import KEY_PREFIX_HINTS, PROVIDER_ENV_MAP, PROVIDER_KEY_URLS
+
+    try:
+        config = get_config()
+    except ShardError as exc:
+        _err.print(f"[bold red]Error:[/bold red] {exc}")
+        sys.exit(1)
+
+    # --list: show all keys with masking
+    if list_keys:
+        table = Table(show_header=False, expand=False, box=None, padding=(0, 2))
+        table.add_column("Provider", style="bold")
+        table.add_column("Key", style="dim")
+        table.add_column("Status")
+
+        for prov in sorted(PROVIDER_ENV_MAP.keys()):
+            key = config.api_keys.get(prov, "")
+            if key:
+                masked = key[:6] + "..." + key[-5:] if len(key) > 14 else key[:3] + "..."
+                table.add_row(prov, masked, "[green]✓[/green]")
+            else:
+                table.add_row(prov, "not set", "[dim]—[/dim]")
+
+        _out.print()
+        _out.print(table)
+        _out.print()
+        return
+
+    # --remove: delete a key
+    if remove_provider:
+        import os
+        env_var = PROVIDER_ENV_MAP.get(remove_provider)
+        if remove_provider in config.api_keys:
+            del config.api_keys[remove_provider]
+            save_config(config)
+            if env_var and env_var in os.environ:
+                del os.environ[env_var]
+            _err.print(f"[green]✓[/green] Removed {remove_provider} API key")
+        else:
+            _err.print(f"[yellow]No key configured for {remove_provider}.[/yellow]")
+        return
+
+    # Add/update key for a provider
+    if provider is None:
+        _err.print("[bold red]Error:[/bold red] Specify a provider: shard model key <provider>")
+        _err.print(f"[dim]Available: {', '.join(sorted(PROVIDER_ENV_MAP.keys()))}[/dim]")
+        sys.exit(1)
+
+    if provider not in PROVIDER_ENV_MAP:
+        _err.print(
+            f"[bold red]Error:[/bold red] Unknown provider [bold]{provider}[/bold]. "
+            f"Available: {', '.join(sorted(PROVIDER_ENV_MAP.keys()))}"
+        )
+        sys.exit(1)
+
+    key = click.prompt(f"  {provider} API key", hide_input=True)
+    key = key.strip()
+
+    if not key:
+        _err.print("[bold red]Error:[/bold red] Key cannot be empty.")
+        sys.exit(1)
+
+    # Prefix warning (not rejection)
+    expected_prefix = KEY_PREFIX_HINTS.get(provider)
+    if expected_prefix and not key.startswith(expected_prefix):
+        _err.print(
+            f"[yellow]Warning:[/yellow] This doesn't look like a standard {provider} key "
+            f"(expected prefix: {expected_prefix}). Saving anyway."
+        )
+
+    config.api_keys[provider] = key
+    save_config(config)
+
+    import os
+    env_var = PROVIDER_ENV_MAP[provider]
+    os.environ[env_var] = key
+
+    url = PROVIDER_KEY_URLS.get(provider, "")
+    _err.print(f"[green]✓[/green] {provider.capitalize()} API key saved")
+    if url:
+        _err.print(f"  [dim]Get keys at: {url}[/dim]")
+
+
 # ── list ──────────────────────────────────────────────────────────────────────
 
 
@@ -658,6 +935,8 @@ def config(set_value: str | None, rerun_setup: bool) -> None:
 
     Use --set KEY=VALUE to update a single field without re-running the wizard.
     Use --setup to rerun the interactive first-run setup wizard from scratch.
+
+    See also: shard model (manage models and API keys)
     """
     if rerun_setup:
         try:
