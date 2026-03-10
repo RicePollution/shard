@@ -292,6 +292,129 @@ def _print_style_summary(profile: "StyleProfile") -> None:  # noqa: F821
     _out.print(panel)
 
 
+# ── sync ──────────────────────────────────────────────────────────────────────
+
+
+@cli.command("sync")
+@click.option("--dry-run", is_flag=True, default=False, help="Preview links without changing files.")
+@click.option("--vault", "vault_override", default=None, metavar="PATH", help="Override vault path.")
+@click.option("--verbose", is_flag=True, default=False, help="Show each link as it's added.")
+def sync(dry_run: bool, vault_override: str | None, verbose: bool) -> None:
+    """Sync backlinks across your vault.
+
+    Scans all notes and adds [[wikilinks]] between related notes to build
+    a connected knowledge graph. Always creates a backup before making changes.
+    """
+    import shutil
+    from datetime import datetime, timezone
+
+    from shard.pipeline.linker import Linker, apply_links
+    from shard.vault import parse_frontmatter, read_note, walk_vault
+
+    try:
+        config = get_config()
+        if vault_override:
+            config.vault_path = Path(vault_override).expanduser().resolve()
+
+        # Backup
+        if not dry_run:
+            timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+            backup_dir = Path.home() / ".shard" / "backups" / timestamp
+            with _err.status("[bold cyan]Backing up vault…[/bold cyan]", spinner="dots"):
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                for md_file in walk_vault(config):
+                    rel = md_file.relative_to(config.vault_path)
+                    dest = backup_dir / rel
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(md_file, dest)
+            _err.print("[green]●[/green] Backing up vault...            [green]✓[/green]")
+
+        # Build title index
+        with _err.status("[bold cyan]Building title index…[/bold cyan]", spinner="dots"):
+            all_paths = walk_vault(config)
+            title_map: dict[str, Path] = {}
+            for p in all_paths:
+                try:
+                    content = read_note(p)
+                    metadata, _ = parse_frontmatter(content)
+                    title = metadata.get("title", p.stem)
+                except ShardError:
+                    title = p.stem
+                title_map[title] = p
+
+        all_titles = list(title_map.keys())
+        _err.print(
+            f"[green]●[/green] Building title index...        "
+            f"[green]✓[/green] ({len(all_titles)} notes)"
+        )
+
+        # Process notes in batches
+        linker = Linker()
+        notes_updated = 0
+        links_added = 0
+        total = len(all_paths)
+
+        from tqdm import tqdm
+
+        for path in tqdm(all_paths, desc="● Finding links", file=sys.stderr, ncols=60):
+            try:
+                content = read_note(path)
+            except ShardError:
+                continue
+
+            # Get titles excluding the current note
+            current_title = None
+            for t, p in title_map.items():
+                if p == path:
+                    current_title = t
+                    break
+            other_titles = [t for t in all_titles if t != current_title]
+
+            suggestions = linker.find_links(content, other_titles)
+            if not suggestions:
+                continue
+
+            new_content = apply_links(content, suggestions)
+            if new_content == content:
+                continue
+
+            actual_links = len(suggestions)
+            links_added += actual_links
+            notes_updated += 1
+
+            if verbose:
+                for s in suggestions:
+                    _err.print(
+                        f"  [dim]{path.name}:[/dim] "
+                        f"[cyan]{s.original_text}[/cyan] → "
+                        f"[green]{s.linked_text}[/green]"
+                    )
+
+            if dry_run:
+                continue
+
+            try:
+                path.write_text(new_content, encoding="utf-8")
+            except OSError as exc:
+                _err.print(f"[yellow]Warning:[/yellow] Could not write {path.name}: {exc}")
+
+        _err.print("[green]●[/green] Writing changes...             [green]✓[/green]")
+
+    except ShardError as exc:
+        _err.print(f"[bold red]Error:[/bold red] {exc}")
+        sys.exit(1)
+
+    _out.print()
+    if dry_run:
+        _out.print("[bold yellow]Dry run complete (no files changed)[/bold yellow]")
+    else:
+        _out.print("[bold green]✓ Sync complete[/bold green]")
+    _out.print(f"  Notes updated:  {notes_updated}")
+    _out.print(f"  Links added:    {links_added}")
+    if not dry_run:
+        _out.print(f"  Backup saved:   {backup_dir}")
+
+
 # ── list ──────────────────────────────────────────────────────────────────────
 
 
