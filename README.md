@@ -424,6 +424,7 @@ shard config
 ```
 
 Example wizard output:
+  Note: Default path requires a space for /Documents/Obsidian Vault
 
 ```text
 Welcome to Shard! Let's get you set up.
