@@ -255,6 +255,21 @@ Before submitting:
 - [ ] Error handling is clean (use appropriate `ShardError` subclass)
 - [ ] README or docs updated if adding features
 
+## Cutting a Release
+
+When a significant batch of features is complete:
+
+1. Update `version` in `pyproject.toml` (semver: major.minor.patch)
+2. Add a new version block to `CHANGELOG.md` with date and changes
+3. Commit: `"chore: bump version to X.Y.Z"`
+4. Push to origin
+5. Run: `gh release create vX.Y.Z --title "..." --notes "..."`
+
+**Version guidelines:**
+- Patch (0.0.x): bug fixes only
+- Minor (0.x.0): new features, backwards compatible
+- Major (x.0.0): breaking changes
+
 ## Questions?
 
 Open an issue or discussion on the repository. We're here to help!
