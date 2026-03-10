@@ -8,6 +8,8 @@ Shard ingests PDFs, URLs, YouTube videos, and text into your Obsidian vault as s
 
 <!-- TODO: Add demo GIF ![shard demo](assets/demo.gif) -->
 
+---
+
 ## ✨ Features
 
 - 📄 Multi-source ingestion (PDF, URL, YouTube, text, stdin)
@@ -21,6 +23,163 @@ Shard ingests PDFs, URLs, YouTube videos, and text into your Obsidian vault as s
 - ⚛️ **Atomic notes** — automatically splits any source into focused single-concept notes, all interlinked with [[wikilinks]]
 - 🔗 **Auto backlinks** — syncs [[wikilinks]] across your vault to build a rich knowledge graph
 - 📁 **Flat file saving** — notes save directly to your vault root, no buried subfolders
+- 🤖 **Model switcher** — switch between local and cloud models, pull Ollama models, and manage API keys with `shard model`
+
+---
+
+## ⚡ Quick Start
+
+```bash
+git clone https://github.com/RicePollution/shard
+cd shard
+uv tool install .
+shard config
+shard add "https://example.com/article"
+shard ask "what did I just read?"
+```
+
+> Need Python, uv, or Ollama? See [Prerequisites](#-prerequisites).
+
+---
+
+## 📖 Commands
+
+### shard add
+Ingest any source into your vault as atomic notes.
+
+| Flag | Description |
+|---|---|
+| `--single` | One note, no splitting |
+
+```bash
+shard add "https://example.com"
+shard add /path/to/paper.pdf
+shard add "https://youtube.com/watch?v=..."
+shard add "raw text or idea"
+cat file.txt | shard add -
+```
+
+### shard ask
+Semantic search across your entire vault with AI answers.
+
+| Flag | Description |
+|---|---|
+| `--top-k N` | Number of source chunks to retrieve (default: 5) |
+
+```bash
+shard ask "what do I know about RAG?"
+shard ask "best practices for testing" --top-k 10
+```
+
+### shard model
+Manage models and API keys.
+
+| Subcommand | Description |
+|---|---|
+| `shard model` | Interactive model menu |
+| `shard model list` | Show all available models |
+| `shard model use <model>` | Switch to a model |
+| `shard model pull <model>` | Pull an Ollama model |
+| `shard model key <provider>` | Add a cloud API key |
+| `shard model key --list` | Show configured keys |
+
+```bash
+shard model use gpt-5
+shard model pull llama3.1:8b
+shard model key openai
+```
+
+### shard learn
+Learn your vault's writing style for better note generation.
+
+| Flag | Description |
+|---|---|
+| `--depth quick` | 5 notes, 1 API call, fastest |
+| `--depth normal` | 20 notes, balanced (default) |
+| `--depth deep` | Entire vault, most accurate |
+| `--force` | Re-analyze even if profile exists |
+| `--show` | Print current style fingerprint |
+| `--template` | Print blank note template |
+
+```bash
+shard learn
+shard learn --depth deep
+```
+
+### shard sync
+Add [[wikilinks]] between related notes automatically.
+
+| Flag | Description |
+|---|---|
+| `--dry-run` | Preview changes without modifying files |
+| `--verbose` | Show each link as it's added |
+
+```bash
+shard sync
+shard sync --dry-run
+```
+
+### shard index
+Rebuild the semantic search index from your vault.
+
+```bash
+shard index
+```
+
+### shard list
+Show all imported notes.
+
+```bash
+shard list
+```
+
+### shard open
+Fuzzy-match and open a note in Obsidian.
+
+```bash
+shard open "machine learning"
+```
+
+### shard config
+View and update settings.
+
+| Flag | Description |
+|---|---|
+| `--show` | Print current config |
+| `--set KEY=VALUE` | Update a single value |
+| `--setup` | Re-run setup wizard |
+
+```bash
+shard config --show
+shard config --set vault_path="/new/path"
+```
+
+---
+
+## 🤖 Models
+
+### 🏷️ Model Tiers
+
+| Tier | Models | Cost | RAM Required |
+|------|--------|------|-------------|
+| 🟢 Local Small | `qwen2.5:3b`, `phi3.5`, `llama3.2:3b` | Free | ~4 GB |
+| 🟡 Local Large | `llama3.1:8b`, `qwen2.5:14b` | Free | 8+ GB |
+| 🔵 Cloud | Claude, GPT-4o, Gemini, Groq | Paid / Free tier | N/A |
+
+### ☁️ Cloud Providers
+
+| Provider | Model String | Free Tier | API Key |
+|----------|-------------|-----------|---------|
+| Groq | `groq/llama-3.1-8b-instant` | ✅ Yes | [console.groq.com](https://console.groq.com) |
+| OpenAI | `gpt-4o` | ❌ No | [platform.openai.com](https://platform.openai.com/api-keys) |
+| Anthropic | `claude-sonnet-4-20250514` | ❌ No | [console.anthropic.com](https://console.anthropic.com) |
+| Google | `gemini/gemini-pro` | ✅ Yes | [aistudio.google.com](https://aistudio.google.com/apikey) |
+
+> 💡 **Groq** offers a generous free tier with fast inference. It's the best starting point if you want cloud models without paying.
+
+Add API keys with: `shard model key <provider>`
+
+---
 
 ## 📋 Prerequisites
 
@@ -347,6 +506,8 @@ Open Obsidian and create a vault if you haven't. Note the vault folder path — 
 - macOS: `/Users/yourname/Documents/MyVault`
 - Windows: `C:\Users\yourname\Documents\MyVault`
 
+---
+
 ## 🚀 Installation
 
 ```bash
@@ -428,7 +589,7 @@ shard config
 ```
 
 Example wizard output:
-  
+
 Note: Default path requires a space for /Documents/Obsidian Vault
 
 ```text
@@ -455,268 +616,7 @@ Config saved to /home/user/.config/shard/config.json
 | 🍎 macOS | `~/.config/shard/config.json` |
 | 🪟 Windows | `%APPDATA%\shard\config.json` |
 
-## 📖 Usage
-
-### `shard add`
-
-Add a note from any source:
-
-```bash
-# From a PDF
-shard add /path/to/paper.pdf
-
-# From a URL
-shard add "https://example.com/interesting-article"
-
-# From YouTube (extracts transcript automatically)
-shard add "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-
-# From plain text
-shard add "The key insight about neural networks is..."
-
-# From stdin
-cat notes.txt | shard add -
-
-# Single note (classic behavior, no splitting)
-shard add "https://example.com/article" --single
-```
-
-Example output:
-
-```text
-✓ Extracted: url — Example Article Title
-✓ Formatted: Example Article Title (5 tags)
-✓ Saved: Imported/Shards/example-article-title.md
-✓ Indexed: 12 chunks
-
-Shard added successfully.
-  Title:  Example Article Title
-  Tags:   machine-learning, neural-networks, deep-learning, ai, tutorial
-  Chunks: 12
-  Path:   /home/user/Documents/MyVault/Imported/Shards/example-article-title.md
-```
-
-### `shard ask`
-
-```bash
-shard ask "What are the best practices for testing?"
-
-# Get more context
-shard ask "machine learning basics" --top-k 10
-```
-
-Example output:
-
-```text
-Based on your notes, here are the key testing best practices:
-
-1. Write tests before implementation (TDD approach)
-2. Keep unit tests focused on a single behavior
-3. Use mocks sparingly — prefer integration tests where possible
-
-Sources: "Software Testing Fundamentals" (relevance: 89.2%),
-"Clean Code Notes" (relevance: 74.5%)
-
-┌─────────────────────────────┬──────────┬───────────┐
-│ Title                       │ Path     │ Relevance │
-├─────────────────────────────┼──────────┼───────────┤
-│ Software Testing Fundamentals│ Imported │    89.2%  │
-│ Clean Code Notes            │ Imported │    74.5%  │
-└─────────────────────────────┴──────────┴───────────┘
-```
-
-### `shard index`
-
-```bash
-shard index
-```
-
-Reindex all notes. Run after manual edits or to rebuild the search index.
-
-### `shard learn`
-
-Analyzes your existing notes to learn your exact writing style —
-headings, tags, frontmatter, tone, structure. Future notes from
-`shard add` will be written to match your vault natively.
-
-```bash
-shard learn                    # normal depth (default)
-shard learn --depth quick      # 1 API call, fast
-shard learn --depth deep       # entire vault, most accurate
-shard learn --force            # re-analyze
-shard learn --show             # print current style fingerprint
-shard learn --template         # print blank note template
-```
-
-Example output:
-```
-📝 Your note fingerprint:
-┌─────────────────────────────────────────────────────┐
-│ 1. Always opens with a one-sentence TL;DR in bold   │
-│ 2. Uses ## TL;DR, ## Notes, ## Links as headings    │
-│ 3. Tags: #lowercase-hyphen, 3-5 per note            │
-│ 4. Frontmatter: tags, date, source                  │
-│ 5. Ends every note with ## Related                  │
-└─────────────────────────────────────────────────────┘
-Average note length: ~320 words
-```
-
-### `shard sync`
-
-Scans your vault and adds [[wikilinks]] between related notes.
-Makes your Obsidian graph view much more connected and useful.
-Always creates a backup before making any changes.
-
-```bash
-shard sync                # sync all backlinks
-shard sync --dry-run      # preview links without changing files
-shard sync --verbose      # show each link as it's added
-```
-
-Example output:
-```
-✓ Sync complete
-  Notes updated:  34
-  Links added:    127
-  Backup saved:   ~/.shard/backups/2024-01-15T14:32:00/
-```
-
-### `shard list`
-
-```bash
-shard list
-```
-
-Show table of all imported notes with title, tags, date, path.
-
-### `shard open`
-
-```bash
-shard open "machine learning"
-```
-
-Fuzzy-matches note titles and opens the best match in Obsidian.
-
-### `shard config`
-
-```bash
-# View current config
-shard config
-
-# Update a setting
-shard config --set model="ollama_chat/llama3.1:8b"
-shard config --set vault_path="/new/vault/path"
-
-# Re-run setup wizard
-shard config --setup
-```
-
-## 🤖 Models
-
-### 🏷️ Model Tiers
-
-| Tier | Models | Cost | RAM Required |
-|------|--------|------|-------------|
-| 🟢 Local Small | `qwen2.5:3b`, `phi3.5`, `llama3.2:3b` | Free | ~4 GB |
-| 🟡 Local Large | `llama3.1:8b`, `qwen2.5:14b` | Free | 8+ GB |
-| 🔵 Cloud | Claude, GPT-4o, Gemini, Groq | Paid / Free tier | N/A |
-
-### Switching models
-
-```bash
-# Use a different Ollama model
-ollama pull llama3.1:8b
-shard config --set model="ollama_chat/llama3.1:8b"
-
-# Use a cloud model
-shard config --set model="groq/llama-3.1-8b-instant"
-```
-
-### ☁️ Cloud Providers
-
-| Provider | Model String | Free Tier | API Key |
-|----------|-------------|-----------|---------|
-| Groq | `groq/llama-3.1-8b-instant` | ✅ Yes | [console.groq.com](https://console.groq.com) |
-| OpenAI | `gpt-4o` | ❌ No | [platform.openai.com](https://platform.openai.com/api-keys) |
-| Anthropic | `claude-sonnet-4-20250514` | ❌ No | [console.anthropic.com](https://console.anthropic.com) |
-| Google | `gemini/gemini-pro` | ✅ Yes | [aistudio.google.com](https://aistudio.google.com/apikey) |
-
-> 💡 **Groq** offers a generous free tier with fast inference. It's the best starting point if you want cloud models without paying.
-
-**Setting API keys:**
-
-<details>
-<summary>🐧 Arch Linux</summary>
-
-```bash
-export GROQ_API_KEY="your-key-here"
-export OPENAI_API_KEY="your-key-here"
-export ANTHROPIC_API_KEY="your-key-here"
-
-# Make permanent by adding to ~/.bashrc:
-echo 'export GROQ_API_KEY="your-key-here"' >> ~/.bashrc
-source ~/.bashrc
-```
-
-</details>
-
-<details>
-<summary>🐧 Ubuntu / Debian</summary>
-
-```bash
-export GROQ_API_KEY="your-key-here"
-export OPENAI_API_KEY="your-key-here"
-export ANTHROPIC_API_KEY="your-key-here"
-
-# Make permanent by adding to ~/.bashrc:
-echo 'export GROQ_API_KEY="your-key-here"' >> ~/.bashrc
-source ~/.bashrc
-```
-
-</details>
-
-<details>
-<summary>🐧 Fedora / RHEL</summary>
-
-```bash
-export GROQ_API_KEY="your-key-here"
-export OPENAI_API_KEY="your-key-here"
-export ANTHROPIC_API_KEY="your-key-here"
-
-# Make permanent by adding to ~/.bashrc:
-echo 'export GROQ_API_KEY="your-key-here"' >> ~/.bashrc
-source ~/.bashrc
-```
-
-</details>
-
-<details>
-<summary>🍎 macOS</summary>
-
-```bash
-export GROQ_API_KEY="your-key-here"
-export OPENAI_API_KEY="your-key-here"
-export ANTHROPIC_API_KEY="your-key-here"
-
-# Make permanent by adding to ~/.zshrc:
-echo 'export GROQ_API_KEY="your-key-here"' >> ~/.zshrc
-source ~/.zshrc
-```
-
-</details>
-
-<details>
-<summary>🪟 Windows</summary>
-
-```powershell
-[System.Environment]::SetEnvironmentVariable("GROQ_API_KEY", "your-key-here", "User")
-[System.Environment]::SetEnvironmentVariable("OPENAI_API_KEY", "your-key-here", "User")
-[System.Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY", "your-key-here", "User")
-```
-
-After running the above commands, restart your terminal for the changes to take effect.
-
-</details>
+---
 
 ## ⚙️ Configuration Reference
 
@@ -731,6 +631,8 @@ After running the above commands, restart your terminal for the changes to take 
 | `notes_subfolder` | `""` (vault root) | Where new notes are saved |
 | `style_profile` | auto-managed | Path to learned style JSON |
 
+---
+
 ## 🏗️ How It Works
 
 ```text
@@ -741,6 +643,8 @@ Your Input → Extractor → Formatter (AI) → Indexer → Obsidian Vault
 - **Formatter**: Sends text to your LLM to generate a structured note with title, tags, summary, and markdown body
 - **Indexer**: Chunks the note text, generates vector embeddings (sentence-transformers), and stores them in ChromaDB for semantic search
 - **Vault**: Saves the note as a markdown file with YAML frontmatter in your Obsidian vault
+
+---
 
 ## 🔧 Troubleshooting
 
@@ -863,6 +767,8 @@ shard sync --dry-run
 ```
 
 </details>
+
+---
 
 ## 🤝 Contributing
 
