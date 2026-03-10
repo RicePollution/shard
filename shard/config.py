@@ -358,7 +358,155 @@ def first_run_setup() -> ShardConfig:
     )
     save_config(config)
     _console.print(f"\n[bold green]Config saved to {CONFIG_PATH}[/bold green]\n")
+
+    # ── Step 5: offer learn and sync ──────────────────────────────────────────
+
+    _offer_learn_and_sync(config)
+
     return config
+
+
+# ── Post-setup helpers ────────────────────────────────────────────────────────
+
+
+def _offer_learn_and_sync(config: ShardConfig) -> None:
+    """Optionally run learn and sync after setup completes.
+
+    Skips both prompts if the vault has fewer than 5 notes.  Failures are
+    caught gracefully and never block the rest of setup.
+    """
+    from shard.vault import walk_vault
+
+    try:
+        note_count = len(walk_vault(config))
+    except Exception:
+        note_count = 0
+
+    if note_count < 5:
+        _console.print(
+            "[dim]ℹ️  Add some notes first, then run "
+            "[bold]shard learn[/bold] and [bold]shard sync[/bold][/dim]"
+        )
+        return
+
+    # ── Prompt 1: shard learn ────────────────────────────────────────────────
+
+    _console.print(
+        "\n→ Would you like shard to [bold]learn your note style[/bold] now?\n"
+        "  Analyzes your vault so new notes match your writing style.\n"
+        f"  Recommended if you already have notes ({note_count} found)."
+    )
+    if click.confirm("  Run shard learn?", default=True):
+        try:
+            from pathlib import Path as _Path
+
+            from shard.pipeline.learner import Learner, save_style_profile
+            from shard.vault import read_note
+
+            style_path = _Path.home() / ".shard" / "style.json"
+            notes = []
+            for p in walk_vault(config):
+                try:
+                    notes.append(read_note(p))
+                except Exception:
+                    continue
+
+            learner = Learner()
+            with _console.status(
+                "[bold cyan]Learning your style…[/bold cyan]", spinner="dots"
+            ):
+                profile = learner.analyze(notes)
+            save_style_profile(profile, style_path)
+            _console.print("[green]✓ Style profile saved[/green]")
+        except Exception as exc:
+            _console.print(
+                f"[yellow]⚠️  Could not run shard learn — try manually: "
+                f"shard learn[/yellow] ({exc})"
+            )
+    else:
+        _console.print("[dim]You can run this anytime with: shard learn[/dim]")
+
+    # ── Prompt 2: shard sync ─────────────────────────────────────────────────
+
+    _console.print(
+        "\n→ Would you like to [bold]sync backlinks[/bold] across your vault now?\n"
+        "  Adds [[wikilinks]] between related notes for the graph view.\n"
+        f"  Recommended if you have 10+ notes ({note_count} found)."
+    )
+    if click.confirm("  Run shard sync?", default=True):
+        try:
+            import shutil
+            from datetime import datetime, timezone
+            from pathlib import Path as _Path
+
+            from shard.pipeline.linker import Linker, apply_links
+            from shard.vault import parse_frontmatter, read_note
+
+            # Create backup
+            timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+            backup_dir = _Path.home() / ".shard" / "backups" / timestamp
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            all_paths = walk_vault(config)
+            for md_file in all_paths:
+                rel = md_file.relative_to(config.vault_path)
+                dest = backup_dir / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(md_file, dest)
+
+            # Build title index
+            title_map: dict[str, Any] = {}
+            for p in all_paths:
+                try:
+                    content = read_note(p)
+                    metadata, _ = parse_frontmatter(content)
+                    title_map[metadata.get("title", p.stem)] = p
+                except Exception:
+                    title_map[p.stem] = p
+
+            all_titles = list(title_map.keys())
+            linker = Linker()
+            notes_updated = 0
+            links_added = 0
+
+            with _console.status(
+                "[bold cyan]Syncing backlinks…[/bold cyan]", spinner="dots"
+            ):
+                for path in all_paths:
+                    try:
+                        content = read_note(path)
+                    except Exception:
+                        continue
+
+                    current_title = None
+                    for t, p in title_map.items():
+                        if p == path:
+                            current_title = t
+                            break
+                    other_titles = [t for t in all_titles if t != current_title]
+
+                    suggestions = linker.find_links(content, other_titles)
+                    if not suggestions:
+                        continue
+
+                    new_content = apply_links(content, suggestions)
+                    if new_content == content:
+                        continue
+
+                    links_added += len(suggestions)
+                    notes_updated += 1
+                    path.write_text(new_content, encoding="utf-8")
+
+            _console.print(
+                f"[green]✓ Backlinks synced[/green] "
+                f"({notes_updated} notes, {links_added} links)"
+            )
+        except Exception as exc:
+            _console.print(
+                f"[yellow]⚠️  Could not run shard sync — try manually: "
+                f"shard sync[/yellow] ({exc})"
+            )
+    else:
+        _console.print("[dim]You can run this anytime with: shard sync[/dim]")
 
 
 # ── Internal prompt helper ────────────────────────────────────────────────────
