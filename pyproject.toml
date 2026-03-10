@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "shard-cli"
+version = "0.1.0"
+description = "Ingest PDFs, URLs, YouTube, and text into Obsidian as structured AI-generated notes with semantic search."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    "litellm",
+    "click",
+    "python-dotenv",
+    "chromadb",
+    "sentence-transformers",
+    "pdfplumber",
+    "httpx",
+    "beautifulsoup4",
+    "youtube-transcript-api",
+    "rich",
+    "tqdm",
+    "thefuzz",
+]
+
+[project.scripts]
+shard = "shard.cli:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["shard"]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-mock",
+    "ruff",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
