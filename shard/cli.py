@@ -300,6 +300,7 @@ _SETTABLE_FIELDS = {
     "model",
     "chroma_path",
     "embedding_model",
+    "notes_subfolder",
 }
 
 _FIELD_HELP = {
@@ -307,6 +308,7 @@ _FIELD_HELP = {
     "model": "LiteLLM model string used for note generation (e.g. ollama_chat/qwen2.5:3b).",
     "chroma_path": "Directory where ChromaDB persists its vector index.",
     "embedding_model": "Sentence-transformers model name for vector embeddings.",
+    "notes_subfolder": "Vault-relative subfolder for new notes (empty = vault root).",
 }
 
 
@@ -422,6 +424,7 @@ def _display_config() -> None:
         ("model",           cfg.model or "[dim](not set)[/dim]"),
         ("chroma_path",     str(cfg.chroma_path)),
         ("embedding_model", cfg.embedding_model),
+        ("notes_subfolder", cfg.notes_subfolder or "[dim](vault root)[/dim]"),
     ]
 
     for key, value in rows:

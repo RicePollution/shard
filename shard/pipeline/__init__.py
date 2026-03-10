@@ -37,6 +37,14 @@ class VaultError(ShardError):
     """Vault I/O error."""
 
 
+class LearnError(ShardError):
+    """Failed to learn writing style from vault notes."""
+
+
+class LinkError(ShardError):
+    """Failed to generate or apply cross-note links."""
+
+
 # ── Pipeline dataclasses ─────────────────────────────────────────────────────
 
 

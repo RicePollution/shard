@@ -45,6 +45,8 @@ class ShardConfig:
         embedding_model: Sentence-transformers model name for vector embeddings.
         custom_models: User-defined model descriptors forwarded to LiteLLM.
         api_keys: Mapping of provider name to API key (e.g. ``{"openai": "sk-…"}``).
+        notes_subfolder: Vault-relative subdirectory where notes are saved.
+            An empty string (the default) saves notes directly in the vault root.
     """
 
     vault_path: Path
@@ -53,6 +55,7 @@ class ShardConfig:
     embedding_model: str = DEFAULT_EMBEDDING_MODEL
     custom_models: list[dict[str, Any]] = field(default_factory=list)
     api_keys: dict[str, str] = field(default_factory=dict)
+    notes_subfolder: str = ""
 
     def __post_init__(self) -> None:
         # Coerce strings to Path objects when deserialised from JSON.
@@ -104,6 +107,7 @@ def _dict_to_config(data: dict[str, Any]) -> ShardConfig:
         embedding_model=data.get("embedding_model", DEFAULT_EMBEDDING_MODEL),
         custom_models=data.get("custom_models", []),
         api_keys=data.get("api_keys", {}),
+        notes_subfolder=data.get("notes_subfolder", ""),
     )
 
 

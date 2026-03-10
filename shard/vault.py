@@ -13,9 +13,6 @@ from urllib.parse import quote
 from shard.config import ShardConfig
 from shard.pipeline import FormattedNote, VaultError
 
-# Relative path inside the vault where Shard notes are written.
-_SHARDS_SUBDIR = Path("Imported") / "Shards"
-
 
 # ── Slug ─────────────────────────────────────────────────────────────────────
 
@@ -100,23 +97,33 @@ def _build_frontmatter(note: FormattedNote) -> str:
 def save_note(note: FormattedNote, config: ShardConfig) -> Path:
     """Persist *note* to the vault as a Markdown file with YAML frontmatter.
 
-    The file is written to ``<vault>/Imported/Shards/<slug>.md``.  Parent
-    directories are created automatically.  If a file at the target path
+    The destination is determined by ``config.notes_subfolder``:
+
+    * Empty string (default) — file is written directly to the vault root as
+      ``<vault>/<slug>.md``.
+    * Non-empty string — file is written to ``<vault>/<notes_subfolder>/<slug>.md``.
+
+    Parent directories are created automatically.  If a file at the target path
     already exists it is **overwritten** — callers that need collision-safe
     writes should check first via :func:`list_shards`.
 
     Args:
         note: The fully-formed note to serialise.
-        config: Shard runtime configuration supplying the vault root.
+        config: Shard runtime configuration supplying the vault root and
+            optional subfolder.
 
     Returns:
         The absolute :class:`~pathlib.Path` of the written file.
 
     Raises:
-        VaultError: If the file cannot be written (e.g. permission denied).
+        VaultError: If the directory cannot be created or the file cannot be
+            written (e.g. permission denied).
     """
     slug = slugify(note.title) or "untitled"
-    dest_dir = config.vault_path / _SHARDS_SUBDIR
+    if config.notes_subfolder:
+        dest_dir = config.vault_path / config.notes_subfolder
+    else:
+        dest_dir = config.vault_path
     dest_path = dest_dir / f"{slug}.md"
 
     try:
@@ -163,22 +170,32 @@ def walk_vault(config: ShardConfig) -> list[Path]:
 
 
 def list_shards(config: ShardConfig) -> list[Path]:
-    """Return all Markdown files inside the Shard import directory.
+    """Return all Markdown files from the configured notes location.
 
-    Unlike :func:`walk_vault`, this only looks in
-    ``<vault>/Imported/Shards/``.  If that sub-directory does not yet exist
-    the function returns an empty list rather than raising.
+    The search directory is determined by ``config.notes_subfolder``:
+
+    * Empty string (default) — globs ``*.md`` non-recursively from the vault
+      root.
+    * Non-empty string — globs ``*.md`` non-recursively from
+      ``<vault>/<notes_subfolder>``.
+
+    If the target directory does not yet exist the function returns an empty
+    list rather than raising.
 
     Args:
-        config: Shard runtime configuration supplying the vault root.
+        config: Shard runtime configuration supplying the vault root and
+            optional subfolder.
 
     Returns:
-        A sorted list of ``*.md`` paths under the Shards directory.
+        A sorted list of ``*.md`` paths from the notes directory.
     """
-    shards_dir = config.vault_path / _SHARDS_SUBDIR
-    if not shards_dir.exists():
+    if config.notes_subfolder:
+        notes_dir = config.vault_path / config.notes_subfolder
+    else:
+        notes_dir = config.vault_path
+    if not notes_dir.exists():
         return []
-    return sorted(shards_dir.glob("*.md"))
+    return sorted(notes_dir.glob("*.md"))
 
 
 def read_note(path: Path) -> str:
