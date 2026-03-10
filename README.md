@@ -18,6 +18,7 @@ Shard ingests PDFs, URLs, YouTube videos, and text into your Obsidian vault as s
 - 🔌 Flexible model support via LiteLLM (Ollama, OpenAI, Anthropic, Groq, etc.)
 - ⚡ Fuzzy note search and one-click Obsidian opening
 - 🧠 **Learn your style** — analyzes your vault and writes new notes that match how you already write
+- ⚛️ **Atomic notes** — automatically splits any source into focused single-concept notes, all interlinked with [[wikilinks]]
 - 🔗 **Auto backlinks** — syncs [[wikilinks]] across your vault to build a rich knowledge graph
 - 📁 **Flat file saving** — notes save directly to your vault root, no buried subfolders
 
@@ -475,6 +476,9 @@ shard add "The key insight about neural networks is..."
 
 # From stdin
 cat notes.txt | shard add -
+
+# Single note (classic behavior, no splitting)
+shard add "https://example.com/article" --single
 ```
 
 Example output:
@@ -536,10 +540,12 @@ headings, tags, frontmatter, tone, structure. Future notes from
 `shard add` will be written to match your vault natively.
 
 ```bash
-shard learn               # analyze vault and save style profile
-shard learn --force       # re-analyze even if profile exists
-shard learn --show        # print current style fingerprint
-shard learn --template    # print your blank note template
+shard learn                    # normal depth (default)
+shard learn --depth quick      # 1 API call, fast
+shard learn --depth deep       # entire vault, most accurate
+shard learn --force            # re-analyze
+shard learn --show             # print current style fingerprint
+shard learn --template         # print blank note template
 ```
 
 Example output:

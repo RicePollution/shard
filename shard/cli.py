@@ -54,28 +54,46 @@ def cli(ctx: click.Context) -> None:
 
 @cli.command("add")
 @click.argument("input", metavar="INPUT")
-def add(input: str) -> None:
+@click.option(
+    "--single",
+    is_flag=True,
+    default=False,
+    help="Generate one note instead of splitting into atomic notes.",
+)
+def add(input: str, single: bool) -> None:
     """Add a note from a file path, URL, or raw text.
 
     INPUT can be a local file path (PDF or text), a web URL, a YouTube URL,
     or any freeform text string to import directly.
+
+    By default, content is split into multiple atomic notes (one idea per note)
+    that are interlinked with [[wikilinks]]. Use --single to generate a single
+    note instead.
     """
     from shard.runner import run_add_pipeline
 
     try:
         config = get_config()
-        indexed = run_add_pipeline(input, config=config)
+        indexed_notes = run_add_pipeline(input, config=config, single=single)
     except ShardError as exc:
         _err.print(f"[bold red]Error:[/bold red] {exc}")
         sys.exit(1)
 
-    # Primary result summary goes to stdout so it can be piped/captured.
     _out.print()
-    _out.print("[bold green]Shard added successfully.[/bold green]")
-    _out.print(f"  [dim]Title:[/dim]  {indexed.title}")
-    _out.print(f"  [dim]Tags:[/dim]   {', '.join(indexed.tags) if indexed.tags else '(none)'}")
-    _out.print(f"  [dim]Chunks:[/dim] {indexed.num_chunks}")
-    _out.print(f"  [dim]Path:[/dim]   {indexed.path}")
+    if len(indexed_notes) == 1:
+        # Single note output (--single or fallback)
+        indexed = indexed_notes[0]
+        _out.print("[bold green]Shard added successfully.[/bold green]")
+        _out.print(f"  [dim]Title:[/dim]  {indexed.title}")
+        _out.print(f"  [dim]Tags:[/dim]   {', '.join(indexed.tags) if indexed.tags else '(none)'}")
+        _out.print(f"  [dim]Chunks:[/dim] {indexed.num_chunks}")
+        _out.print(f"  [dim]Path:[/dim]   {indexed.path}")
+    else:
+        # Atomic notes output
+        _out.print(f"[bold green]✓ Split into {len(indexed_notes)} atomic notes:[/bold green]")
+        for i, indexed in enumerate(indexed_notes):
+            label = "(parent index)" if i == 0 else ""
+            _out.print(f"  📄 {indexed.path.name:<30s} {label}")
 
 
 # ── ask ───────────────────────────────────────────────────────────────────────
@@ -170,7 +188,14 @@ STYLE_PROFILE_PATH = Path.home() / ".shard" / "style.json"
 @click.option("--force", is_flag=True, default=False, help="Re-analyze even if a style profile exists.")
 @click.option("--show", "show_profile", is_flag=True, default=False, help="Print current style fingerprint.")
 @click.option("--template", "show_template", is_flag=True, default=False, help="Print the blank note template.")
-def learn(force: bool, show_profile: bool, show_template: bool) -> None:
+@click.option(
+    "--depth",
+    type=click.Choice(["quick", "normal", "deep"], case_sensitive=False),
+    default="normal",
+    show_default=True,
+    help="Analysis depth: quick (5 notes, 1 call), normal (20 notes), deep (all notes).",
+)
+def learn(force: bool, show_profile: bool, show_template: bool, depth: str) -> None:
     """Learn your note-writing style from existing vault notes.
 
     Analyzes your vault and saves a style profile so future notes from
@@ -210,7 +235,8 @@ def learn(force: bool, show_profile: bool, show_template: bool) -> None:
 
     import random
 
-    from shard.pipeline.learner import MAX_SAMPLE_SIZE
+    # Import here to match existing lazy-import pattern
+    from shard.pipeline.learner import QUICK_SAMPLE_SIZE, MAX_SAMPLE_SIZE
 
     try:
         config = get_config()
@@ -230,36 +256,70 @@ def learn(force: bool, show_profile: bool, show_template: bool) -> None:
             )
             sys.exit(1)
 
-        # Sample with random spread
-        if len(notes) > MAX_SAMPLE_SIZE:
-            sampled = random.sample(notes, MAX_SAMPLE_SIZE)
+        # Determine sample size based on depth
+        if depth == "quick":
+            sample_size = min(len(notes), QUICK_SAMPLE_SIZE)
+            api_calls = 1
+        elif depth == "deep":
+            sample_size = len(notes)
+            api_calls = len(notes) + 1
         else:
-            sampled = list(notes)
+            sample_size = min(len(notes), MAX_SAMPLE_SIZE)
+            api_calls = sample_size + 1
 
         _err.print(
-            f"[green]●[/green] Sampling vault notes...        "
-            f"[green]✓[/green] ({len(sampled)} notes sampled)"
+            f"[green]●[/green] Mode: {depth} ({sample_size} notes, ~{api_calls} API calls)"
         )
+
+        # Deep mode confirmation for large vaults
+        if depth == "deep" and len(notes) >= 50:
+            _err.print(
+                f"\n[yellow]⚠️  Deep analysis on {len(notes)} notes will make "
+                f"{len(notes)} API calls.[/yellow]\n"
+                "This may take several minutes and use significant credits."
+            )
+            if not click.confirm("Continue?", default=False):
+                _err.print("[yellow]Aborted.[/yellow]")
+                return
 
         learner = Learner()
 
-        # Pass 1 with progress
-        with _err.status(
-            f"[bold cyan]● Pass 1: Analyzing structure… 0/{len(sampled)}[/bold cyan]",
-            spinner="dots",
-        ):
-            pass1_results = learner._pass1_extract(sampled)
+        if depth == "quick":
+            # Quick: single pass, no progress needed for individual notes
+            with _err.status("[bold cyan]● Analyzing style…[/bold cyan]", spinner="dots"):
+                profile = learner.analyze(notes, depth="quick")
+            _err.print("[green]●[/green] Quick analysis...              [green]✓[/green]")
+        else:
+            # Normal / Deep: use all notes for deep, sampled for normal
+            if depth == "deep":
+                sampled = list(notes)
+            elif len(notes) > MAX_SAMPLE_SIZE:
+                sampled = random.sample(notes, MAX_SAMPLE_SIZE)
+            else:
+                sampled = list(notes)
 
-        _err.print(
-            f"[green]●[/green] Pass 1: Analyzing structure... "
-            f"[green]✓[/green] {len(pass1_results)}/{len(pass1_results)}"
-        )
+            _err.print(
+                f"[green]●[/green] Sampling vault notes...        "
+                f"[green]✓[/green] ({len(sampled)} notes sampled)"
+            )
 
-        # Pass 2
-        with _err.status("[bold cyan]● Pass 2: Synthesizing style…[/bold cyan]", spinner="dots"):
-            profile = learner._pass2_synthesize(pass1_results, len(pass1_results))
+            # Pass 1 with progress
+            with _err.status(
+                f"[bold cyan]● Pass 1: Analyzing structure… 0/{len(sampled)}[/bold cyan]",
+                spinner="dots",
+            ):
+                pass1_results = learner._pass1_extract(sampled)
 
-        _err.print("[green]●[/green] Pass 2: Synthesizing style...  [green]✓[/green]")
+            _err.print(
+                f"[green]●[/green] Pass 1: Analyzing structure... "
+                f"[green]✓[/green] {len(pass1_results)}/{len(pass1_results)}"
+            )
+
+            # Pass 2
+            with _err.status("[bold cyan]● Pass 2: Synthesizing style…[/bold cyan]", spinner="dots"):
+                profile = learner._pass2_synthesize(pass1_results, len(pass1_results))
+
+            _err.print("[green]●[/green] Pass 2: Synthesizing style...  [green]✓[/green]")
 
         save_style_profile(profile, STYLE_PROFILE_PATH)
         _err.print("[green]●[/green] Style profile saved            [green]✓[/green]")

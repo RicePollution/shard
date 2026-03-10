@@ -16,6 +16,7 @@ from click.testing import CliRunner
 
 from shard.pipeline import LearnError
 from shard.pipeline.learner import (
+    QUICK_SAMPLE_SIZE,
     Learner,
     StyleProfile,
     _parse_json_response,
@@ -409,3 +410,212 @@ class TestCliLearnForce:
 
         mock_pass2.assert_called_once()
         mock_save.assert_called_once()
+
+
+# ── Learner depth modes ──────────────────────────────────────────────────────
+
+
+class TestLearnerQuickDepth:
+    def test_quick_makes_exactly_one_api_call(self) -> None:
+        """Quick depth skips Pass 1 and makes a single synthesis call."""
+        learner = Learner()
+        notes = _make_notes(10)
+
+        with patch("shard.pipeline.learner.complete") as mock_complete:
+            # Quick mode: 1 call total (direct synthesis)
+            mock_complete.return_value = _PASS2_JSON
+            learner.analyze(notes, depth="quick")
+
+        assert mock_complete.call_count == 1
+
+    def test_quick_samples_5_notes_max(self) -> None:
+        """Quick depth samples at most QUICK_SAMPLE_SIZE (5) notes."""
+        learner = Learner()
+        notes = _make_notes(20)
+
+        captured_prompt: list[str] = []
+
+        def capture(prompt: str, **kwargs: object) -> str:
+            captured_prompt.append(prompt)
+            return _PASS2_JSON
+
+        with patch("shard.pipeline.learner.complete", side_effect=capture):
+            learner.analyze(notes, depth="quick")
+
+        # The prompt should mention 5 notes (QUICK_SAMPLE_SIZE)
+        assert "5" in captured_prompt[0]
+
+    def test_quick_returns_valid_style_profile(self) -> None:
+        """Quick depth returns a complete StyleProfile."""
+        learner = Learner()
+        notes = _make_notes(5)
+
+        with patch("shard.pipeline.learner.complete", return_value=_PASS2_JSON):
+            profile = learner.analyze(notes, depth="quick")
+
+        assert isinstance(profile, StyleProfile)
+        assert profile.notes_sampled == 5
+
+    def test_quick_with_fewer_than_5_notes_uses_all(self) -> None:
+        """Quick depth with exactly 5 notes uses all of them."""
+        learner = Learner()
+        notes = _make_notes(5)
+
+        with patch("shard.pipeline.learner.complete", return_value=_PASS2_JSON):
+            profile = learner.analyze(notes, depth="quick")
+
+        assert profile.notes_sampled == 5
+
+    def test_quick_raises_on_model_failure(self) -> None:
+        """Quick depth wraps model errors in LearnError."""
+        learner = Learner()
+        notes = _make_notes(5)
+
+        with patch(
+            "shard.pipeline.learner.complete",
+            side_effect=RuntimeError("connection refused"),
+        ):
+            with pytest.raises(LearnError, match="quick synthesis"):
+                learner.analyze(notes, depth="quick")
+
+
+class TestLearnerNormalDepth:
+    def test_normal_is_default(self) -> None:
+        """Normal depth is used when depth is not specified."""
+        learner = Learner()
+        notes = _make_notes(5)
+
+        with patch("shard.pipeline.learner.complete") as mock_complete:
+            mock_complete.side_effect = [_PASS1_JSON] * 5 + [_PASS2_JSON]
+            learner.analyze(notes)  # no depth kwarg
+
+        # 5 pass-1 + 1 pass-2 = 6 calls
+        assert mock_complete.call_count == 6
+
+    def test_normal_samples_max_20(self) -> None:
+        """Normal depth caps at MAX_SAMPLE_SIZE (20) notes for pass 1."""
+        learner = Learner()
+        notes = _make_notes(30)
+
+        with patch("shard.pipeline.learner.complete") as mock_complete:
+            mock_complete.side_effect = [_PASS1_JSON] * 20 + [_PASS2_JSON]
+            learner.analyze(notes, depth="normal")
+
+        assert mock_complete.call_count == 21
+
+
+class TestLearnerDeepDepth:
+    def test_deep_uses_all_notes(self) -> None:
+        """Deep depth processes ALL notes without sampling cap."""
+        learner = Learner()
+        notes = _make_notes(30)
+
+        with patch("shard.pipeline.learner.complete") as mock_complete:
+            # 30 pass-1 calls + 1 pass-2 call = 31 total
+            mock_complete.side_effect = [_PASS1_JSON] * 30 + [_PASS2_JSON]
+            learner.analyze(notes, depth="deep")
+
+        assert mock_complete.call_count == 31
+
+    def test_deep_with_small_vault(self) -> None:
+        """Deep depth on a small vault processes all notes."""
+        learner = Learner()
+        notes = _make_notes(7)
+
+        with patch("shard.pipeline.learner.complete") as mock_complete:
+            mock_complete.side_effect = [_PASS1_JSON] * 7 + [_PASS2_JSON]
+            profile = learner.analyze(notes, depth="deep")
+
+        assert mock_complete.call_count == 8
+        assert profile.notes_sampled == 7
+
+    def test_deep_returns_valid_profile(self) -> None:
+        """Deep depth returns a StyleProfile with correct notes_sampled."""
+        learner = Learner()
+        notes = _make_notes(10)
+
+        with patch("shard.pipeline.learner.complete") as mock_complete:
+            mock_complete.side_effect = [_PASS1_JSON] * 10 + [_PASS2_JSON]
+            profile = learner.analyze(notes, depth="deep")
+
+        assert isinstance(profile, StyleProfile)
+        assert profile.notes_sampled == 10
+
+
+# ── CLI learn --depth ────────────────────────────────────────────────────────
+
+
+class TestCliLearnDepth:
+    def test_quick_depth_via_cli(self, tmp_path: Path) -> None:
+        """CLI learn --depth quick calls analyze with depth='quick'."""
+        from shard.cli import cli
+        from shard.config import ShardConfig
+
+        runner = CliRunner()
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config = ShardConfig(
+            vault_path=vault,
+            chroma_path=tmp_path / ".chroma",
+            model="ollama_chat/qwen2.5:3b",
+        )
+        fake_config_path = tmp_path / "config.json"
+        fake_config_path.write_text("{}", encoding="utf-8")
+
+        note_paths = [tmp_path / f"note{i}.md" for i in range(6)]
+        mock_profile = _make_style_profile()
+
+        with (
+            patch("shard.cli.CONFIG_PATH", fake_config_path),
+            patch("shard.cli.STYLE_PROFILE_PATH", tmp_path / "style.json"),
+            patch("shard.cli.get_config", return_value=config),
+            patch("shard.vault.walk_vault", return_value=note_paths),
+            patch("shard.vault.read_note", return_value="# Note\n\nContent"),
+            patch(
+                "shard.pipeline.learner.Learner.analyze",
+                return_value=mock_profile,
+            ) as mock_analyze,
+            patch("shard.pipeline.learner.save_style_profile"),
+        ):
+            result = runner.invoke(cli, ["learn", "--force", "--depth", "quick"])
+
+        mock_analyze.assert_called_once()
+        call_kwargs = mock_analyze.call_args
+        # Check depth='quick' was passed
+        assert call_kwargs[1].get("depth") == "quick" or (
+            len(call_kwargs[0]) > 1 and call_kwargs[0][1] == "quick"
+        )
+        assert result.exit_code == 0
+
+    def test_deep_depth_shows_warning_for_large_vault(self, tmp_path: Path) -> None:
+        """CLI learn --depth deep shows confirmation prompt for 50+ notes."""
+        from shard.cli import cli
+        from shard.config import ShardConfig
+
+        runner = CliRunner()
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        config = ShardConfig(
+            vault_path=vault,
+            chroma_path=tmp_path / ".chroma",
+            model="ollama_chat/qwen2.5:3b",
+        )
+        fake_config_path = tmp_path / "config.json"
+        fake_config_path.write_text("{}", encoding="utf-8")
+
+        note_paths = [tmp_path / f"note{i}.md" for i in range(60)]
+
+        with (
+            patch("shard.cli.CONFIG_PATH", fake_config_path),
+            patch("shard.cli.STYLE_PROFILE_PATH", tmp_path / "style.json"),
+            patch("shard.cli.get_config", return_value=config),
+            patch("shard.vault.walk_vault", return_value=note_paths),
+            patch("shard.vault.read_note", return_value="# Note\n\nContent"),
+        ):
+            # User declines the confirmation prompt
+            result = runner.invoke(cli, ["learn", "--force", "--depth", "deep"], input="n\n")
+
+        assert result.exit_code == 0
+        assert "Aborted" in result.output
