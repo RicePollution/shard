@@ -104,19 +104,27 @@ class TestSaveNote:
         assert path.stem == "my-awesome-note"
         assert path.suffix == ".md"
 
-    def test_written_under_imported_shards_subdir(self, mock_config: ShardConfig) -> None:
+    def test_written_to_vault_root_by_default(self, mock_config: ShardConfig) -> None:
+        note = _make_note()
+        path = save_note(note, mock_config)
+
+        assert path.parent == mock_config.vault_path
+
+    def test_written_to_subfolder_when_configured(self, mock_config: ShardConfig) -> None:
+        mock_config.notes_subfolder = "Imported/Shards"
         note = _make_note()
         path = save_note(note, mock_config)
         expected_parent = mock_config.vault_path / "Imported" / "Shards"
 
         assert path.parent == expected_parent
 
-    def test_parent_directories_created_automatically(self, mock_config: ShardConfig) -> None:
+    def test_subfolder_directories_created_automatically(self, mock_config: ShardConfig) -> None:
+        mock_config.notes_subfolder = "Notes/Shard"
         note = _make_note()
         save_note(note, mock_config)
-        shards_dir = mock_config.vault_path / "Imported" / "Shards"
+        sub_dir = mock_config.vault_path / "Notes" / "Shard"
 
-        assert shards_dir.is_dir()
+        assert sub_dir.is_dir()
 
     def test_empty_title_falls_back_to_untitled(self, mock_config: ShardConfig) -> None:
         note = FormattedNote(
