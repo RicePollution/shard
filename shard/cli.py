@@ -579,7 +579,6 @@ def model_use(model_name: str) -> None:
     from shard.models import (
         MODEL_CATALOG,
         PROVIDER_ENV_MAP,
-        PROVIDER_KEY_URLS,
         _detect_provider,
         detect_available_models,
         pull_ollama_model,
@@ -619,7 +618,6 @@ def model_use(model_name: str) -> None:
             has_key = bool(config.api_keys.get(provider)) or bool(os.environ.get(env_var))
 
             if not has_key:
-                url = PROVIDER_KEY_URLS.get(provider, "")
                 if click.confirm(
                     f"'{model_name}' requires a {provider} API key. Add it now?",
                     default=True,
@@ -631,7 +629,10 @@ def model_use(model_name: str) -> None:
                     config.api_keys[provider] = key.strip()
                     os.environ[env_var] = key.strip()
                 else:
-                    _err.print(f"[yellow]Aborted.[/yellow] Add key with: shard model key {provider}")
+                    _err.print(
+                        f"[yellow]Aborted.[/yellow] Add key with: "
+                        f"shard model key {provider}"
+                    )
                     sys.exit(0)
 
     config.model = model_name
@@ -671,8 +672,14 @@ def model_pull(model_name: str) -> None:
 
 @model.command("key")
 @click.argument("provider", required=False, default=None)
-@click.option("--list", "list_keys", is_flag=True, default=False, help="Show all configured API keys.")
-@click.option("--remove", "remove_provider", default=None, metavar="PROVIDER", help="Remove a provider's API key.")
+@click.option(
+    "--list", "list_keys", is_flag=True, default=False,
+    help="Show all configured API keys.",
+)
+@click.option(
+    "--remove", "remove_provider", default=None, metavar="PROVIDER",
+    help="Remove a provider's API key.",
+)
 def model_key(provider: str | None, list_keys: bool, remove_provider: str | None) -> None:
     """Add or update an API key for a cloud provider."""
     from shard.models import KEY_PREFIX_HINTS, PROVIDER_ENV_MAP, PROVIDER_KEY_URLS

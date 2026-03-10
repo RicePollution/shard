@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import litellm
 import pytest
@@ -796,7 +796,6 @@ class TestModelPull:
 
     def test_pull_failure_exits_nonzero(self, tmp_path: Path) -> None:
         runner = CliRunner()
-        config = _make_config(tmp_path)
         fake_config_path = tmp_path / "config.json"
         fake_config_path.write_text("{}", encoding="utf-8")
 
@@ -855,7 +854,6 @@ class TestAuthError:
     def test_auth_error_raises_model_error(self) -> None:
         from shard.models import complete
 
-        fake_response = MagicMock()
         fake_config = MagicMock()
         fake_config.model = "gpt-4o"
 

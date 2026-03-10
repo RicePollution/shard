@@ -22,18 +22,28 @@ _OLLAMA_TIMEOUT = 2.0
 
 MODEL_CATALOG: list[dict[str, str]] = [
     # Local Small (Free, ~4GB RAM)
-    {"name": "ollama_chat/qwen2.5:3b", "tier": "local_small", "provider": "ollama", "label": "Qwen 2.5 3B"},
-    {"name": "ollama_chat/phi3.5", "tier": "local_small", "provider": "ollama", "label": "Phi 3.5"},
-    {"name": "ollama_chat/llama3.2:3b", "tier": "local_small", "provider": "ollama", "label": "Llama 3.2 3B"},
+    {"name": "ollama_chat/qwen2.5:3b", "tier": "local_small",
+     "provider": "ollama", "label": "Qwen 2.5 3B"},
+    {"name": "ollama_chat/phi3.5", "tier": "local_small",
+     "provider": "ollama", "label": "Phi 3.5"},
+    {"name": "ollama_chat/llama3.2:3b", "tier": "local_small",
+     "provider": "ollama", "label": "Llama 3.2 3B"},
     # Local Large (Free, 8GB+ RAM)
-    {"name": "ollama_chat/llama3.1:8b", "tier": "local_large", "provider": "ollama", "label": "Llama 3.1 8B"},
-    {"name": "ollama_chat/qwen2.5:14b", "tier": "local_large", "provider": "ollama", "label": "Qwen 2.5 14B"},
+    {"name": "ollama_chat/llama3.1:8b", "tier": "local_large",
+     "provider": "ollama", "label": "Llama 3.1 8B"},
+    {"name": "ollama_chat/qwen2.5:14b", "tier": "local_large",
+     "provider": "ollama", "label": "Qwen 2.5 14B"},
     # Cloud (API key required)
-    {"name": "gpt-4o", "tier": "cloud", "provider": "openai", "label": "GPT-4o"},
-    {"name": "gpt-5", "tier": "cloud", "provider": "openai", "label": "GPT-5"},
-    {"name": "claude-sonnet-4-20250514", "tier": "cloud", "provider": "anthropic", "label": "Claude Sonnet 4"},
-    {"name": "groq/llama3-70b", "tier": "cloud", "provider": "groq", "label": "Llama 3 70B (Groq)", "free": "true"},
-    {"name": "gemini/gemini-2.0-flash", "tier": "cloud", "provider": "gemini", "label": "Gemini 2.0 Flash", "free": "true"},
+    {"name": "gpt-4o", "tier": "cloud",
+     "provider": "openai", "label": "GPT-4o"},
+    {"name": "gpt-5", "tier": "cloud",
+     "provider": "openai", "label": "GPT-5"},
+    {"name": "claude-sonnet-4-20250514", "tier": "cloud",
+     "provider": "anthropic", "label": "Claude Sonnet 4"},
+    {"name": "groq/llama3-70b", "tier": "cloud",
+     "provider": "groq", "label": "Llama 3 70B (Groq)", "free": "true"},
+    {"name": "gemini/gemini-2.0-flash", "tier": "cloud",
+     "provider": "gemini", "label": "Gemini 2.0 Flash", "free": "true"},
 ]
 
 PROVIDER_ENV_MAP: dict[str, str] = {
