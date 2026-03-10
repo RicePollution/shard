@@ -7,14 +7,18 @@ from rich.console import Console
 from shard.config import ShardConfig, get_config
 from shard.pipeline import IndexedNote
 from shard.pipeline.extractor import extract
-from shard.pipeline.formatter import format_note
+from shard.pipeline.formatter import format_notes
 from shard.pipeline.indexer import index_note
 from shard.vault import save_note
 
 _console = Console(stderr=True)
 
 
-def run_add_pipeline(input_str: str, config: ShardConfig | None = None) -> IndexedNote:
+def run_add_pipeline(
+    input_str: str,
+    config: ShardConfig | None = None,
+    single: bool = False,
+) -> list[IndexedNote]:
     """Run the full add pipeline: extract → format → save → index.
 
     Parameters
@@ -23,11 +27,13 @@ def run_add_pipeline(input_str: str, config: ShardConfig | None = None) -> Index
         The raw input (file path, URL, or text) to process.
     config:
         Optional config override; defaults to :func:`~shard.config.get_config`.
+    single:
+        When True, bypasses atomic splitting and generates a single note.
 
     Returns
     -------
-    IndexedNote
-        The final indexed note with path, title, tags, summary, and chunk count.
+    list[IndexedNote]
+        The indexed notes with path, title, tags, summary, and chunk count.
 
     Raises
     ------
@@ -42,16 +48,37 @@ def run_add_pipeline(input_str: str, config: ShardConfig | None = None) -> Index
     source_label = f"{extracted.source_type.name.lower()} — {extracted.title}"
     _console.print(f"[green]Extracted:[/green] {source_label}")
 
-    with _console.status("[bold cyan]Formatting note…[/bold cyan]", spinner="dots"):
-        formatted = format_note(extracted)
-    _console.print(f"[green]Formatted:[/green] {formatted.title} ({len(formatted.tags)} tags)")
+    with _console.status("[bold cyan]Formatting notes…[/bold cyan]", spinner="dots"):
+        formatted_notes = format_notes(extracted, single=single)
+    if single:
+        _console.print(
+            f"[green]Formatted:[/green] {formatted_notes[0].title} "
+            f"({len(formatted_notes[0].tags)} tags)"
+        )
+    else:
+        _console.print(
+            f"[green]Formatted:[/green] Split into {len(formatted_notes)} atomic notes"
+        )
 
-    with _console.status("[bold cyan]Saving to vault…[/bold cyan]", spinner="dots"):
-        path = save_note(formatted, config)
-    _console.print(f"[green]Saved:[/green] {path.relative_to(config.vault_path)}")
+    indexed_notes: list[IndexedNote] = []
 
-    with _console.status("[bold cyan]Indexing…[/bold cyan]", spinner="dots"):
-        indexed = index_note(formatted, path, config)
-    _console.print(f"[green]Indexed:[/green] {indexed.num_chunks} chunks")
+    for i, formatted in enumerate(formatted_notes, 1):
+        label = f"{i}/{len(formatted_notes)}"
+        with _console.status(
+            f"[bold cyan]Saving note {label}…[/bold cyan]", spinner="dots"
+        ):
+            path = save_note(formatted, config)
+        _console.print(
+            f"[green]Saved:[/green] {path.relative_to(config.vault_path)} ({label})"
+        )
 
-    return indexed
+        with _console.status(
+            f"[bold cyan]Indexing {label}…[/bold cyan]", spinner="dots"
+        ):
+            indexed = index_note(formatted, path, config)
+        indexed_notes.append(indexed)
+
+    total_chunks = sum(n.num_chunks for n in indexed_notes)
+    _console.print(f"[green]Indexed:[/green] {total_chunks} chunks total")
+
+    return indexed_notes

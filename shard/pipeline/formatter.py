@@ -7,9 +7,11 @@ clean note bodies.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from pathlib import Path
+from typing import Any
 
 from shard.models import complete
 from shard.pipeline import ExtractedContent, FormattedNote, FormattingError
@@ -144,8 +146,6 @@ def _load_style_data() -> dict | None:
         return None
 
     try:
-        import json
-
         return json.loads(STYLE_PROFILE_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         logger.warning("Could not load style profile from %s", STYLE_PROFILE_PATH)
@@ -225,3 +225,297 @@ def _extract_body(response: str) -> str:
     if match:
         return response[match.end():].strip()
     return ""
+
+
+def _parse_json_response(response: str) -> dict[str, Any]:
+    """Extract and parse a JSON object from an LLM response.
+
+    Handles responses where JSON may be wrapped in markdown code fences.
+    """
+    text = response.strip()
+    if text.startswith("```"):
+        newline_idx = text.find("\n")
+        if newline_idx != -1:
+            text = text[newline_idx + 1:]
+            if text.endswith("```"):
+                text = text[:-3].strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        text = text[start:end + 1]
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise FormattingError(f"Failed to parse JSON from model response: {exc}") from exc
+
+
+def format_notes(extracted: ExtractedContent, single: bool = False) -> list[FormattedNote]:
+    """Format extracted content into one or more structured notes.
+
+    Parameters
+    ----------
+    extracted:
+        The raw extracted content to format.
+    single:
+        When True, bypasses atomic splitting and returns a single note
+        (wrapped in a list for a uniform return type).
+
+    Returns
+    -------
+    list[FormattedNote]
+        One FormattedNote when *single* is True, otherwise multiple
+        atomic notes plus a parent index note.
+    """
+    if single:
+        return [format_note(extracted)]
+    return _format_atomic_notes(extracted)
+
+
+def _format_atomic_notes(extracted: ExtractedContent) -> list[FormattedNote]:
+    """Split extracted content into multiple atomic notes via a two-stage LLM process.
+
+    Stage A decomposes the content into distinct subtopics.
+    Stage B generates one note per subtopic plus a parent index note.
+    All notes are interlinked with [[wikilinks]].
+    """
+    text = _truncate(extracted.text)
+    style = _load_style_data()
+    style_injection = _build_style_injection(style)
+
+    # ── Stage A: Topic decomposition ──
+    decomposition = _stage_a_decompose(text, extracted)
+
+    parent_topic = decomposition["parent_topic"]
+    parent_summary = decomposition["parent_summary"]
+    subtopics = decomposition["subtopics"]
+
+    if not subtopics:
+        # Fallback: if decomposition produced no subtopics, return single note
+        return [format_note(extracted)]
+
+    all_titles = [st["title"] for st in subtopics]
+
+    # ── Stage B: Generate one note per subtopic ──
+    notes: list[FormattedNote] = []
+
+    for subtopic in subtopics:
+        note = _stage_b_generate_subtopic(
+            subtopic, parent_topic, parent_summary, all_titles,
+            style_injection, extracted,
+        )
+        notes.append(note)
+
+    # ── Parent index note ──
+    parent_note = _generate_parent_index(
+        parent_topic, parent_summary, subtopics, notes,
+        style_injection, extracted,
+    )
+
+    # Parent first, then subtopics
+    return [parent_note] + notes
+
+
+def _build_style_injection(style: dict | None) -> str:
+    """Build a style injection string from the style profile, if available."""
+    if style is None:
+        return ""
+    fingerprints = "\n".join(style.get("fingerprints", []))
+    return (
+        "\nMatch the user's writing style exactly:\n"
+        f"STYLE FINGERPRINT:\n{fingerprints}\n"
+        f"TAG FORMAT: {style.get('tag_format', '')}\n"
+        f"TEMPLATE:\n{style.get('template', '')}\n"
+    )
+
+
+def _stage_a_decompose(text: str, extracted: ExtractedContent) -> dict[str, Any]:
+    """Stage A: Identify distinct subtopics in the content."""
+    system = (
+        "You are building an Obsidian knowledge vault using atomic notes. "
+        "Atomic notes follow one strict rule: one note = one idea."
+    )
+    prompt = (
+        "Read this content carefully:\n\n"
+        f"{text}\n\n"
+        "Identify every distinct concept, subtopic, or idea in this content "
+        "that deserves its own dedicated note. Think of these as the "
+        "fundamental building blocks.\n\n"
+        "Rules for splitting:\n"
+        "- Each topic must be genuinely distinct and self-contained\n"
+        "- Aim for 3-8 topics for most content (more if content is very broad)\n"
+        "- Do not create a topic for introductions, conclusions, or meta info\n"
+        "- Each topic should be specific enough to fill 100-300 words\n"
+        "- The topics together should cover the entire source completely\n\n"
+        "Also identify one PARENT topic — the overarching subject that all "
+        "subtopics belong to. This becomes the index note.\n\n"
+        "Return ONLY a JSON object:\n"
+        "{\n"
+        '  "parent_topic": "the overarching subject title",\n'
+        '  "parent_summary": "2-3 sentence summary of the whole source",\n'
+        '  "subtopics": [\n'
+        "    {\n"
+        '      "title": "specific concept name",\n'
+        '      "focus": "one sentence describing exactly what this note covers",\n'
+        '      "relevant_section": "brief quote or description of source section"\n'
+        "    }\n"
+        "  ]\n"
+        "}"
+    )
+
+    try:
+        response = complete(prompt, system=system)
+    except Exception as exc:
+        raise FormattingError(f"Model call failed during topic decomposition: {exc}") from exc
+
+    if not response or not response.strip():
+        raise FormattingError("Model returned an empty response during topic decomposition")
+
+    data = _parse_json_response(response)
+
+    # Validate required fields
+    if "parent_topic" not in data or "subtopics" not in data:
+        raise FormattingError("Topic decomposition missing required fields (parent_topic, subtopics)")
+
+    if not isinstance(data.get("subtopics"), list):
+        raise FormattingError("Topic decomposition 'subtopics' must be a list")
+
+    for i, st in enumerate(data["subtopics"]):
+        if not isinstance(st, dict) or "title" not in st:
+            raise FormattingError(
+                f"Subtopic {i} missing required 'title' key"
+            )
+
+    return data
+
+
+def _stage_b_generate_subtopic(
+    subtopic: dict[str, str],
+    parent_topic: str,
+    parent_summary: str,
+    all_titles: list[str],
+    style_injection: str,
+    extracted: ExtractedContent,
+) -> FormattedNote:
+    """Stage B: Generate a single atomic note for one subtopic."""
+    sibling_titles = [t for t in all_titles if t != subtopic["title"]]
+    siblings_str = "\n".join(f"- [[{t}]]" for t in sibling_titles)
+
+    system = (
+        "You are writing an atomic Obsidian note. An atomic note covers "
+        "ONLY one specific concept — nothing else."
+    )
+    prompt = (
+        f"Write an atomic Obsidian note about this specific topic.\n\n"
+        f"Topic: {subtopic['title']}\n"
+        f"Focus: {subtopic.get('focus', '')}\n"
+        f"Source material: {subtopic.get('relevant_section', '')}\n"
+        f"Overall source context: {parent_summary}\n\n"
+        "All other notes being created from this same source:\n"
+        f"{siblings_str}\n\n"
+        "Rules:\n"
+        "- Cover ONLY the stated topic — nothing else\n"
+        "- Length: 100-300 words of actual content\n"
+        "- Use [[wikilinks]] to link to the other notes listed above "
+        "wherever they are genuinely relevant\n"
+        f"- Link back to the parent index note: [[{parent_topic}]]\n"
+        "- End with a ## Links section listing all sibling note links\n\n"
+        f"{style_injection}\n\n"
+        "Return ONLY a JSON object:\n"
+        "{\n"
+        '  "title": "exact note title",\n'
+        '  "slug": "kebab-case-filename",\n'
+        '  "tags": ["tag1", "tag2"],\n'
+        '  "markdown": "complete note content including any frontmatter"\n'
+        "}"
+    )
+
+    try:
+        response = complete(prompt, system=system)
+    except Exception as exc:
+        raise FormattingError(
+            f"Model call failed generating note for '{subtopic['title']}': {exc}"
+        ) from exc
+
+    if not response or not response.strip():
+        raise FormattingError(f"Model returned empty response for '{subtopic['title']}'")
+
+    data = _parse_json_response(response)
+
+    return FormattedNote(
+        title=data.get("title", subtopic["title"]),
+        tags=data.get("tags", []),
+        summary=subtopic.get("focus", ""),
+        body=data.get("markdown", ""),
+        source=extracted.source,
+        source_type=extracted.source_type,
+        metadata=extracted.metadata,
+    )
+
+
+def _generate_parent_index(
+    parent_topic: str,
+    parent_summary: str,
+    subtopics: list[dict[str, str]],
+    child_notes: list[FormattedNote],
+    style_injection: str,
+    extracted: ExtractedContent,
+) -> FormattedNote:
+    """Generate the parent index (MOC) note linking to all child notes."""
+    children_str = "\n".join(
+        f"- [[{note.title}]]: {st.get('focus', '')}"
+        for st, note in zip(subtopics, child_notes)
+    )
+
+    system = (
+        "You are writing a parent index note (Map of Content) for an "
+        "Obsidian vault. This note links to all child notes from the same source."
+    )
+    prompt = (
+        "Write a parent index note that serves as the entry point for a "
+        "collection of atomic notes all derived from the same source.\n\n"
+        f"Parent topic: {parent_topic}\n"
+        f"Summary: {parent_summary}\n"
+        f"Source: {extracted.source}\n\n"
+        f"Child notes:\n{children_str}\n\n"
+        "This note should:\n"
+        "- Open with a 2-3 sentence summary of the source\n"
+        "- Have a ## Notes section with a [[wikilink]] and one-line "
+        "description for every child note\n"
+        "- Have a ## Source section with the original URL or filename\n"
+        "- Be clearly an index/MOC (map of content) note\n"
+        "- Use the tag #index or #moc\n\n"
+        f"{style_injection}\n\n"
+        "Return ONLY a JSON object:\n"
+        "{\n"
+        '  "title": "parent note title",\n'
+        '  "slug": "kebab-case-filename",\n'
+        '  "tags": ["index", "tag1"],\n'
+        '  "markdown": "complete note content"\n'
+        "}"
+    )
+
+    try:
+        response = complete(prompt, system=system)
+    except Exception as exc:
+        raise FormattingError(
+            f"Model call failed generating parent index note: {exc}"
+        ) from exc
+
+    if not response or not response.strip():
+        raise FormattingError("Model returned empty response for parent index note")
+
+    data = _parse_json_response(response)
+
+    tags = data.get("tags", ["index"])
+    if "index" not in tags and "moc" not in tags:
+        tags.insert(0, "index")
+
+    return FormattedNote(
+        title=data.get("title", parent_topic),
+        tags=tags,
+        summary=parent_summary,
+        body=data.get("markdown", ""),
+        source=extracted.source,
+        source_type=extracted.source_type,
+        metadata=extracted.metadata,
+    )
