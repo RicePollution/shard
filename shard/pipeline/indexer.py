@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from pathlib import Path
 
 import chromadb
@@ -13,7 +15,10 @@ from shard.config import ShardConfig
 from shard.pipeline import FormattedNote, IndexedNote, IndexingError, SourceType
 from shard.vault import list_shards, parse_frontmatter, read_note
 
+logger = logging.getLogger(__name__)
 _console = Console(stderr=True)
+
+_EMBEDDING_LOAD_TIMEOUT = 120  # seconds; covers first-time model download
 
 # ── Text chunking ─────────────────────────────────────────────────────────────
 
@@ -60,6 +65,23 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]
 # ── ChromaDB collection ───────────────────────────────────────────────────────
 
 
+def _load_embedding_fn(model_name: str) -> SentenceTransformerEmbeddingFunction:
+    """Load the embedding function, with a timeout to catch stalled downloads."""
+    def _load() -> SentenceTransformerEmbeddingFunction:
+        return SentenceTransformerEmbeddingFunction(model_name=model_name)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(_load)
+        try:
+            return future.result(timeout=_EMBEDDING_LOAD_TIMEOUT)
+        except FuturesTimeoutError:
+            raise IndexingError(
+                f"Timed out loading embedding model '{model_name}' "
+                f"(>{_EMBEDDING_LOAD_TIMEOUT}s). The model may be downloading. "
+                "Check your network connection or try again."
+            )
+
+
 def _get_collection(config: ShardConfig) -> chromadb.Collection:
     """Return (or create) the ``shard_notes`` ChromaDB collection.
 
@@ -75,7 +97,7 @@ def _get_collection(config: ShardConfig) -> chromadb.Collection:
         The ``shard_notes`` :class:`chromadb.Collection`.
     """
     client = chromadb.PersistentClient(path=str(config.chroma_path))
-    embedding_fn = SentenceTransformerEmbeddingFunction(model_name=config.embedding_model)
+    embedding_fn = _load_embedding_fn(config.embedding_model)
     return client.get_or_create_collection(
         name="shard_notes",
         embedding_function=embedding_fn,  # type: ignore[arg-type]
@@ -85,7 +107,12 @@ def _get_collection(config: ShardConfig) -> chromadb.Collection:
 # ── Note indexing ─────────────────────────────────────────────────────────────
 
 
-def index_note(note: FormattedNote, path: Path, config: ShardConfig) -> IndexedNote:
+def index_note(
+    note: FormattedNote,
+    path: Path,
+    config: ShardConfig,
+    collection: chromadb.Collection | None = None,
+) -> IndexedNote:
     """Chunk *note* and upsert all chunks into ChromaDB.
 
     Each chunk receives a stable document ID of the form
@@ -97,6 +124,10 @@ def index_note(note: FormattedNote, path: Path, config: ShardConfig) -> IndexedN
         path: Vault path of the saved Markdown file; its ``stem`` is used for
             chunk ID generation.
         config: Shard runtime configuration.
+        collection: Optional pre-built ChromaDB collection.  When ``None``,
+            a new collection is obtained via :func:`_get_collection`.  Pass an
+            existing collection to avoid rebuilding the client and embedding
+            function on every call in a loop.
 
     Returns:
         An :class:`~shard.pipeline.IndexedNote` with ``num_chunks`` set to the
@@ -127,7 +158,8 @@ def index_note(note: FormattedNote, path: Path, config: ShardConfig) -> IndexedN
         # Each chunk shares identical metadata — ChromaDB stores it per document.
         metadatas = [metadata] * len(chunks)
 
-        collection = _get_collection(config)
+        if collection is None:
+            collection = _get_collection(config)
         collection.upsert(ids=ids, documents=chunks, metadatas=metadatas)
 
         return IndexedNote(

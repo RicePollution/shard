@@ -225,7 +225,17 @@ def _extract_youtube(url: str) -> ExtractedContent:
     title = _fetch_youtube_title(url) or video_id
 
     try:
-        api = YouTubeTranscriptApi()
+        import requests
+
+        session = requests.Session()
+        original_request = session.request
+
+        def _request_with_timeout(method: str, url: str, **kw: object) -> object:
+            kw.setdefault("timeout", 30)
+            return original_request(method, url, **kw)
+
+        session.request = _request_with_timeout  # type: ignore[assignment]
+        api = YouTubeTranscriptApi(http_client=session)
         transcript = api.fetch(video_id)
     except YouTubeTranscriptApiException as exc:
         raise ExtractionError(

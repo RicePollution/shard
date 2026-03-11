@@ -237,8 +237,8 @@ def _parse_json_response(response: str) -> dict[str, Any]:
         newline_idx = text.find("\n")
         if newline_idx != -1:
             text = text[newline_idx + 1:]
-            if text.endswith("```"):
-                text = text[:-3].strip()
+            if text.rstrip().endswith("```"):
+                text = text.rstrip()[:-3].strip()
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end != -1 and end > start:
@@ -375,6 +375,9 @@ def _stage_a_decompose(text: str, extracted: ExtractedContent) -> dict[str, Any]
     # Validate required fields
     if "parent_topic" not in data or "subtopics" not in data:
         raise FormattingError("Topic decomposition missing required fields (parent_topic, subtopics)")
+
+    if "parent_summary" not in data:
+        raise FormattingError("Topic decomposition missing required field: parent_summary")
 
     if not isinstance(data.get("subtopics"), list):
         raise FormattingError("Topic decomposition 'subtopics' must be a list")

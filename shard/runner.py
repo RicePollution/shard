@@ -8,7 +8,7 @@ from shard.config import ShardConfig, get_config
 from shard.pipeline import IndexedNote
 from shard.pipeline.extractor import extract
 from shard.pipeline.formatter import format_notes
-from shard.pipeline.indexer import index_note
+from shard.pipeline.indexer import _get_collection, index_note
 from shard.vault import save_note
 
 _console = Console(stderr=True)
@@ -60,6 +60,10 @@ def run_add_pipeline(
             f"[green]Formatted:[/green] Split into {len(formatted_notes)} atomic notes"
         )
 
+    # Build the ChromaDB collection once (loads embedding model) and reuse it.
+    with _console.status("[bold cyan]Loading index…[/bold cyan]", spinner="dots"):
+        collection = _get_collection(config)
+
     indexed_notes: list[IndexedNote] = []
 
     for i, formatted in enumerate(formatted_notes, 1):
@@ -75,7 +79,7 @@ def run_add_pipeline(
         with _console.status(
             f"[bold cyan]Indexing {label}…[/bold cyan]", spinner="dots"
         ):
-            indexed = index_note(formatted, path, config)
+            indexed = index_note(formatted, path, config, collection=collection)
         indexed_notes.append(indexed)
 
     total_chunks = sum(n.num_chunks for n in indexed_notes)

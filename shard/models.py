@@ -19,6 +19,7 @@ OLLAMA_BASE_URL = "http://localhost:11434"
 OLLAMA_PREFIX = "ollama_chat/"
 _OLLAMA_TAGS_ENDPOINT = f"{OLLAMA_BASE_URL}/api/tags"
 _OLLAMA_TIMEOUT = 2.0
+_COMPLETION_TIMEOUT = 120  # seconds; prevents indefinite hangs on stalled LLM calls
 
 MODEL_CATALOG: list[dict[str, str]] = [
     # Local Small (Free, ~4GB RAM)
@@ -138,7 +139,7 @@ def pull_ollama_model(model_name: str) -> bool:
                 "POST",
                 f"{OLLAMA_BASE_URL}/api/pull",
                 json={"name": model_name},
-                timeout=None,
+                timeout=httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0),
             ) as response:
                 response.raise_for_status()
                 for line in response.iter_lines():
@@ -189,7 +190,7 @@ def complete(prompt: str, system: str = "", model: str = "") -> str:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
-    kwargs: dict[str, Any] = {"model": model, "messages": messages}
+    kwargs: dict[str, Any] = {"model": model, "messages": messages, "timeout": _COMPLETION_TIMEOUT}
     if model.startswith(OLLAMA_PREFIX):
         kwargs["api_base"] = OLLAMA_BASE_URL
 
