@@ -312,7 +312,7 @@ def _parse_json_response(response: str) -> dict[str, Any]:
         text = text[start:end + 1]
 
     try:
-        return json.loads(text)
+        return json.loads(text, strict=False)
     except json.JSONDecodeError as exc:
         raise LearnError(f"Failed to parse style analysis JSON: {exc}") from exc
 

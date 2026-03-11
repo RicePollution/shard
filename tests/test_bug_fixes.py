@@ -23,7 +23,7 @@ class TestCompletionTimeout:
     """Verify that complete() passes a timeout to litellm.completion."""
 
     def test_complete_passes_timeout_kwarg(self) -> None:
-        from shard.models import _COMPLETION_TIMEOUT, complete
+        from shard.models import _LOCAL_COMPLETION_TIMEOUT, complete
 
         fake_config = MagicMock()
         fake_config.model = "ollama_chat/qwen2.5:3b"
@@ -39,6 +39,28 @@ class TestCompletionTimeout:
             patch("litellm.completion", return_value=mock_response) as mock_completion,
         ):
             complete("test prompt", model="ollama_chat/qwen2.5:3b")
+
+        call_kwargs = mock_completion.call_args.kwargs
+        assert "timeout" in call_kwargs
+        assert call_kwargs["timeout"] == _LOCAL_COMPLETION_TIMEOUT
+
+    def test_cloud_model_uses_standard_timeout(self) -> None:
+        from shard.models import _COMPLETION_TIMEOUT, complete
+
+        fake_config = MagicMock()
+        fake_config.model = "gpt-4o"
+
+        mock_choice = MagicMock()
+        mock_choice.message.content = "response"
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+
+        with (
+            patch("shard.models.get_config", return_value=fake_config),
+            patch("shard.models.inject_api_keys"),
+            patch("litellm.completion", return_value=mock_response) as mock_completion,
+        ):
+            complete("test prompt", model="gpt-4o")
 
         call_kwargs = mock_completion.call_args.kwargs
         assert "timeout" in call_kwargs

@@ -244,7 +244,7 @@ def _parse_json_response(response: str) -> dict[str, Any]:
     if start != -1 and end != -1 and end > start:
         text = text[start:end + 1]
     try:
-        return json.loads(text)
+        return json.loads(text, strict=False)
     except json.JSONDecodeError as exc:
         raise FormattingError(f"Failed to parse JSON from model response: {exc}") from exc
 
