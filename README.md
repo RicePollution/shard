@@ -42,6 +42,44 @@ shard ask "what did I just read?"
 
 ---
 
+## ⚙️ First Time Setup
+
+Run:
+
+```bash
+shard config
+```
+
+Example wizard output:
+
+Note: Default path requires a space for /Documents/Obsidian Vault
+
+```text
+Welcome to Shard! Let's get you set up.
+
+Path to your Obsidian vault [/home/user/Documents/ObsidianVault]: /home/user/Documents/MyVault
+
+Checking for a local Ollama installation…
+Ollama is running. Found 1 installed model(s).
+
+Installed models:
+  qwen2.5:3b
+
+'qwen2.5:3b' is already installed. Using it as the default model.
+
+Config saved to /home/user/.config/shard/config.json
+```
+
+**Config file location:**
+
+| OS | Path |
+|---|---|
+| 🐧 Linux | `~/.config/shard/config.json` |
+| 🍎 macOS | `~/.config/shard/config.json` |
+| 🪟 Windows | `%APPDATA%\shard\config.json` |
+
+---
+
 ## 📖 Commands
 
 ### shard add
@@ -579,44 +617,6 @@ Verify:
 ```bash
 shard --help
 ```
-
-## ⚙️ First Time Setup
-
-Run:
-
-```bash
-shard config
-```
-
-Example wizard output:
-
-Note: Default path requires a space for /Documents/Obsidian Vault
-
-```text
-Welcome to Shard! Let's get you set up.
-
-Path to your Obsidian vault [/home/user/Documents/ObsidianVault]: /home/user/Documents/MyVault
-
-Checking for a local Ollama installation…
-Ollama is running. Found 1 installed model(s).
-
-Installed models:
-  qwen2.5:3b
-
-'qwen2.5:3b' is already installed. Using it as the default model.
-
-Config saved to /home/user/.config/shard/config.json
-```
-
-**Config file location:**
-
-| OS | Path |
-|---|---|
-| 🐧 Linux | `~/.config/shard/config.json` |
-| 🍎 macOS | `~/.config/shard/config.json` |
-| 🪟 Windows | `%APPDATA%\shard\config.json` |
-
----
 
 ## ⚙️ Configuration Reference
 
