@@ -17,6 +17,7 @@ from shard.config import (
     save_config,
 )
 from shard.pipeline import ShardError
+from shard.ui.status import StatusFeed
 
 # stderr console for status messages and errors; stdout console for primary output.
 _err = Console(stderr=True)
@@ -120,8 +121,9 @@ def ask(question: str, top_k: int) -> None:
 
     try:
         config = get_config()
-        with _err.status("[bold cyan]Searching notes…[/bold cyan]", spinner="dots"):
-            result = search_ask(question, config=config, top_k=top_k)
+        with StatusFeed() as status:
+            status.update("Searching vault...")
+            result = search_ask(question, config=config, top_k=top_k, on_status=status.update)
     except ShardError as exc:
         _err.print(f"[bold red]Error:[/bold red] {exc}")
         sys.exit(1)
@@ -241,7 +243,9 @@ def learn(force: bool, show_profile: bool, show_template: bool, depth: str) -> N
 
     try:
         config = get_config()
-        with _err.status("[bold cyan]Sampling vault notes…[/bold cyan]", spinner="dots"):
+
+        with StatusFeed() as status:
+            status.update(f"Sampling vault notes... ({depth})")
             paths = walk_vault(config)
             notes = []
             for p in paths:
@@ -250,80 +254,53 @@ def learn(force: bool, show_profile: bool, show_template: bool, depth: str) -> N
                 except ShardError:
                     continue
 
-        if len(notes) < 5:
-            _err.print(
-                f"[yellow]Not enough notes to learn style (found {len(notes)}, need 5+).[/yellow]\n"
-                "Add some notes first, then re-run [bold]shard learn[/bold]."
-            )
-            sys.exit(1)
+            if len(notes) < 5:
+                status.clear()
+                _err.print(
+                    f"[yellow]Not enough notes to learn style (found {len(notes)}, need 5+).[/yellow]\n"
+                    "Add some notes first, then re-run [bold]shard learn[/bold]."
+                )
+                sys.exit(1)
 
-        # Determine sample size based on depth
-        if depth == "quick":
-            sample_size = min(len(notes), QUICK_SAMPLE_SIZE)
-            api_calls = 1
-        elif depth == "deep":
-            sample_size = len(notes)
-            api_calls = len(notes) + 1
-        else:
-            sample_size = min(len(notes), MAX_SAMPLE_SIZE)
-            api_calls = sample_size + 1
-
-        _err.print(
-            f"[green]●[/green] Mode: {depth} ({sample_size} notes, ~{api_calls} API calls)"
-        )
-
-        # Deep mode confirmation for large vaults
-        if depth == "deep" and len(notes) >= 50:
-            _err.print(
-                f"\n[yellow]⚠️  Deep analysis on {len(notes)} notes will make "
-                f"{len(notes)} API calls.[/yellow]\n"
-                "This may take several minutes and use significant credits."
-            )
-            if not click.confirm("Continue?", default=False):
-                _err.print("[yellow]Aborted.[/yellow]")
-                return
-
-        learner = Learner()
-
-        if depth == "quick":
-            # Quick: single pass, no progress needed for individual notes
-            with _err.status("[bold cyan]● Analyzing style…[/bold cyan]", spinner="dots"):
-                profile = learner.analyze(notes, depth="quick")
-            _err.print("[green]●[/green] Quick analysis...              [green]✓[/green]")
-        else:
-            # Normal / Deep: use all notes for deep, sampled for normal
-            if depth == "deep":
-                sampled = list(notes)
-            elif len(notes) > MAX_SAMPLE_SIZE:
-                sampled = random.sample(notes, MAX_SAMPLE_SIZE)
+            # Determine sample size based on depth
+            if depth == "quick":
+                sample_size = min(len(notes), QUICK_SAMPLE_SIZE)
+            elif depth == "deep":
+                sample_size = len(notes)
             else:
-                sampled = list(notes)
+                sample_size = min(len(notes), MAX_SAMPLE_SIZE)
 
-            _err.print(
-                f"[green]●[/green] Sampling vault notes...        "
-                f"[green]✓[/green] ({len(sampled)} notes sampled)"
-            )
+            # Deep mode confirmation for large vaults
+            if depth == "deep" and len(notes) >= 50:
+                status.clear()
+                _err.print(
+                    f"\n[yellow]⚠️  Deep analysis on {len(notes)} notes will make "
+                    f"{len(notes)} API calls.[/yellow]\n"
+                    "This may take several minutes and use significant credits."
+                )
+                if not click.confirm("Continue?", default=False):
+                    _err.print("[yellow]Aborted.[/yellow]")
+                    return
 
-            # Pass 1 with progress
-            with _err.status(
-                f"[bold cyan]● Pass 1: Analyzing structure… 0/{len(sampled)}[/bold cyan]",
-                spinner="dots",
-            ):
-                pass1_results = learner._pass1_extract(sampled)
+            learner = Learner()
 
-            _err.print(
-                f"[green]●[/green] Pass 1: Analyzing structure... "
-                f"[green]✓[/green] {len(pass1_results)}/{len(pass1_results)}"
-            )
+            if depth == "quick":
+                status.update("Analysing style (quick)...")
+                profile = learner.analyze(notes, depth="quick")
+            else:
+                if depth == "deep":
+                    sampled = list(notes)
+                elif len(notes) > MAX_SAMPLE_SIZE:
+                    sampled = random.sample(notes, MAX_SAMPLE_SIZE)
+                else:
+                    sampled = list(notes)
 
-            # Pass 2
-            with _err.status("[bold cyan]● Pass 2: Synthesizing style…[/bold cyan]", spinner="dots"):
+                pass1_results = learner._pass1_extract(sampled, on_status=status.update)
+
+                status.update("Synthesising style profile...")
                 profile = learner._pass2_synthesize(pass1_results, len(pass1_results))
 
-            _err.print("[green]●[/green] Pass 2: Synthesizing style...  [green]✓[/green]")
-
-        save_style_profile(profile, STYLE_PROFILE_PATH)
-        _err.print("[green]●[/green] Style profile saved            [green]✓[/green]")
+            save_style_profile(profile, STYLE_PROFILE_PATH)
 
     except ShardError as exc:
         _err.print(f"[bold red]Error:[/bold red] {exc}")
@@ -379,24 +356,24 @@ def sync(dry_run: bool, vault_override: str | None, verbose: bool) -> None:
         if vault_override:
             config.vault_path = Path(vault_override).expanduser().resolve()
 
-        # Backup
-        if not dry_run:
-            timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-            backup_dir = Path.home() / ".shard" / "backups" / timestamp
-            with _err.status("[bold cyan]Backing up vault…[/bold cyan]", spinner="dots"):
+        with StatusFeed() as status:
+            # Backup
+            if not dry_run:
+                timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+                backup_dir = Path.home() / ".shard" / "backups" / timestamp
+                status.update("Backing up vault...")
                 backup_dir.mkdir(parents=True, exist_ok=True)
                 for md_file in walk_vault(config):
                     rel = md_file.relative_to(config.vault_path)
                     dest = backup_dir / rel
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(md_file, dest)
-            _err.print("[green]●[/green] Backing up vault...            [green]✓[/green]")
 
-        # Build title index
-        with _err.status("[bold cyan]Building title index…[/bold cyan]", spinner="dots"):
+            # Build title index
             all_paths = walk_vault(config)
             title_map: dict[str, Path] = {}
-            for p in all_paths:
+            for i, p in enumerate(all_paths, 1):
+                status.update(f"Building title index... ({i} notes)")
                 try:
                     content = read_note(p)
                     metadata, _ = parse_frontmatter(content)
@@ -405,21 +382,18 @@ def sync(dry_run: bool, vault_override: str | None, verbose: bool) -> None:
                     title = p.stem
                 title_map[title] = p
 
-        all_titles = list(title_map.keys())
-        _err.print(
-            f"[green]●[/green] Building title index...        "
-            f"[green]✓[/green] ({len(all_titles)} notes)"
-        )
+            all_titles = list(title_map.keys())
 
-        # Process notes in batches
-        linker = Linker()
-        notes_updated = 0
-        links_added = 0
-        total = len(all_paths)
+            # Process notes
+            linker = Linker()
+            notes_updated = 0
+            links_added = 0
 
-        from tqdm import tqdm
+            from tqdm import tqdm
 
-        for path in tqdm(all_paths, desc="● Finding links", file=sys.stderr, ncols=60):
+        for i, path in enumerate(
+            tqdm(all_paths, desc="● Finding links", file=sys.stderr, ncols=60), 1
+        ):
             try:
                 content = read_note(path)
             except ShardError:
@@ -464,8 +438,6 @@ def sync(dry_run: bool, vault_override: str | None, verbose: bool) -> None:
                 path.write_text(new_content, encoding="utf-8")
             except OSError as exc:
                 _err.print(f"[yellow]Warning:[/yellow] Could not write {path.name}: {exc}")
-
-        _err.print("[green]●[/green] Writing changes...             [green]✓[/green]")
 
     except ShardError as exc:
         _err.print(f"[bold red]Error:[/bold red] {exc}")

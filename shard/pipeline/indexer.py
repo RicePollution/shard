@@ -9,7 +9,6 @@ from pathlib import Path
 import chromadb
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 from rich.console import Console
-from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeElapsedColumn
 
 from shard.config import ShardConfig
 from shard.pipeline import FormattedNote, IndexedNote, IndexingError, SourceType
@@ -197,6 +196,8 @@ def reindex_vault(config: ShardConfig) -> int:
         IndexingError: If a note cannot be indexed.  Earlier successfully
             indexed notes are not rolled back.
     """
+    from shard.ui.status import StatusFeed
+
     note_paths = list_shards(config)
     total_chunks = 0
 
@@ -204,22 +205,11 @@ def reindex_vault(config: ShardConfig) -> int:
         _console.print("[yellow]No shard notes found — nothing to index.[/yellow]")
         return 0
 
-    _console.print(
-        f"[bold]Reindexing[/bold] {len(note_paths)} note(s) into ChromaDB…"
-    )
+    with StatusFeed() as status:
+        status.update("Scanning vault...")
 
-    with Progress(
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        TimeElapsedColumn(),
-        console=_console,
-        transient=True,
-    ) as progress:
-        task = progress.add_task("Indexing notes", total=len(note_paths))
-
-        for note_path in note_paths:
-            progress.update(task, description=f"[cyan]{note_path.name}[/cyan]")
+        for i, note_path in enumerate(note_paths, 1):
+            status.update(f"Embedding note {i}/{len(note_paths)}: {note_path.name}...")
 
             content = read_note(note_path)
             metadata, body = parse_frontmatter(content)
@@ -245,10 +235,5 @@ def reindex_vault(config: ShardConfig) -> int:
 
             indexed = index_note(note, note_path, config)
             total_chunks += indexed.num_chunks
-            progress.advance(task)
 
-    _console.print(
-        f"[green]Done.[/green] Indexed [bold]{len(note_paths)}[/bold] note(s) "
-        f"as [bold]{total_chunks}[/bold] chunk(s)."
-    )
     return total_chunks

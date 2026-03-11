@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-from rich.console import Console
-
 from shard.config import ShardConfig, get_config
 from shard.pipeline import IndexedNote
 from shard.pipeline.extractor import extract
 from shard.pipeline.formatter import format_notes
 from shard.pipeline.indexer import _get_collection, index_note
+from shard.ui.status import StatusFeed
 from shard.vault import save_note
-
-_console = Console(stderr=True)
 
 
 def run_add_pipeline(
@@ -43,46 +40,25 @@ def run_add_pipeline(
     if config is None:
         config = get_config()
 
-    with _console.status("[bold cyan]Extracting content…[/bold cyan]", spinner="dots"):
+    with StatusFeed() as status:
+        status.update("Detecting source type...")
         extracted = extract(input_str)
-    source_label = f"{extracted.source_type.name.lower()} — {extracted.title}"
-    _console.print(f"[green]Extracted:[/green] {source_label}")
+        source_label = extracted.source_type.name.lower()
 
-    with _console.status("[bold cyan]Formatting notes…[/bold cyan]", spinner="dots"):
-        formatted_notes = format_notes(extracted, single=single)
-    if single:
-        _console.print(
-            f"[green]Formatted:[/green] {formatted_notes[0].title} "
-            f"({len(formatted_notes[0].tags)} tags)"
-        )
-    else:
-        _console.print(
-            f"[green]Formatted:[/green] Split into {len(formatted_notes)} atomic notes"
-        )
+        status.update(f"Extracting content from {source_label}...")
 
-    # Build the ChromaDB collection once (loads embedding model) and reuse it.
-    with _console.status("[bold cyan]Loading index…[/bold cyan]", spinner="dots"):
+        formatted_notes = format_notes(extracted, single=single, on_status=status.update)
+
+        status.update("Loading search index...")
         collection = _get_collection(config)
 
-    indexed_notes: list[IndexedNote] = []
+        indexed_notes: list[IndexedNote] = []
+        total = len(formatted_notes)
 
-    for i, formatted in enumerate(formatted_notes, 1):
-        label = f"{i}/{len(formatted_notes)}"
-        with _console.status(
-            f"[bold cyan]Saving note {label}…[/bold cyan]", spinner="dots"
-        ):
+        for i, formatted in enumerate(formatted_notes, 1):
+            status.update(f"Saving and indexing note {i}/{total}: {formatted.title}...")
             path = save_note(formatted, config)
-        _console.print(
-            f"[green]Saved:[/green] {path.relative_to(config.vault_path)} ({label})"
-        )
-
-        with _console.status(
-            f"[bold cyan]Indexing {label}…[/bold cyan]", spinner="dots"
-        ):
             indexed = index_note(formatted, path, config, collection=collection)
-        indexed_notes.append(indexed)
-
-    total_chunks = sum(n.num_chunks for n in indexed_notes)
-    _console.print(f"[green]Indexed:[/green] {total_chunks} chunks total")
+            indexed_notes.append(indexed)
 
     return indexed_notes

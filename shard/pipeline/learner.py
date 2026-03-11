@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import random
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -84,7 +85,11 @@ class Learner:
 
         return profile
 
-    def _pass1_extract(self, notes: list[str]) -> list[dict[str, Any]]:
+    def _pass1_extract(
+        self,
+        notes: list[str],
+        on_status: Callable[[str], None] | None = None,
+    ) -> list[dict[str, Any]]:
         """Extract structural facts from each individual note.
 
         Args:
@@ -98,7 +103,7 @@ class Learner:
         """
         results: list[dict[str, Any]] = []
 
-        for note in notes:
+        for i, note in enumerate(notes, 1):
             prompt = (
                 "Analyze this Obsidian note and extract the following exact "
                 "details. Be precise and literal — copy actual examples from "
@@ -128,6 +133,9 @@ class Learner:
                 "  \"sentence_examples\": [\"copy 2-3 actual sentences verbatim\"]\n"
                 "}"
             )
+
+            if on_status:
+                on_status(f"Analysing note {i}/{len(notes)}...")
 
             try:
                 response = complete(prompt)

@@ -11,6 +11,7 @@ import json
 import logging
 import re
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 from shard.models import complete
@@ -249,7 +250,11 @@ def _parse_json_response(response: str) -> dict[str, Any]:
         raise FormattingError(f"Failed to parse JSON from model response: {exc}") from exc
 
 
-def format_notes(extracted: ExtractedContent, single: bool = False) -> list[FormattedNote]:
+def format_notes(
+    extracted: ExtractedContent,
+    single: bool = False,
+    on_status: Callable[[str], None] | None = None,
+) -> list[FormattedNote]:
     """Format extracted content into one or more structured notes.
 
     Parameters
@@ -268,10 +273,13 @@ def format_notes(extracted: ExtractedContent, single: bool = False) -> list[Form
     """
     if single:
         return [format_note(extracted)]
-    return _format_atomic_notes(extracted)
+    return _format_atomic_notes(extracted, on_status=on_status)
 
 
-def _format_atomic_notes(extracted: ExtractedContent) -> list[FormattedNote]:
+def _format_atomic_notes(
+    extracted: ExtractedContent,
+    on_status: Callable[[str], None] | None = None,
+) -> list[FormattedNote]:
     """Split extracted content into multiple atomic notes via a two-stage LLM process.
 
     Stage A decomposes the content into distinct subtopics.
@@ -283,6 +291,8 @@ def _format_atomic_notes(extracted: ExtractedContent) -> list[FormattedNote]:
     style_injection = _build_style_injection(style)
 
     # ── Stage A: Topic decomposition ──
+    if on_status:
+        on_status("Decomposing into subtopics...")
     decomposition = _stage_a_decompose(text, extracted)
 
     parent_topic = decomposition["parent_topic"]
@@ -298,7 +308,9 @@ def _format_atomic_notes(extracted: ExtractedContent) -> list[FormattedNote]:
     # ── Stage B: Generate one note per subtopic ──
     notes: list[FormattedNote] = []
 
-    for subtopic in subtopics:
+    for i, subtopic in enumerate(subtopics, 1):
+        if on_status:
+            on_status(f"Writing note {i}/{len(subtopics)}: {subtopic['title']}...")
         note = _stage_b_generate_subtopic(
             subtopic, parent_topic, parent_summary, all_titles,
             style_injection, extracted,

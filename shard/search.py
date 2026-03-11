@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import chromadb
@@ -53,7 +54,12 @@ _QA_SYSTEM = (
 # ---------------------------------------------------------------------------
 
 
-def ask(question: str, config: ShardConfig, top_k: int = 5) -> AskResult:
+def ask(
+    question: str,
+    config: ShardConfig,
+    top_k: int = 5,
+    on_status: Callable[[str], None] | None = None,
+) -> AskResult:
     """Answer *question* by searching indexed notes and prompting the LLM.
 
     Parameters
@@ -118,6 +124,9 @@ def ask(question: str, config: ShardConfig, top_k: int = 5) -> AskResult:
             answer="No relevant notes found for your question.",
             sources=[],
         )
+
+    if on_status:
+        on_status(f"Found {len(documents)} relevant chunks — generating answer...")
 
     # -- 4. Build context string ------------------------------------------
 
