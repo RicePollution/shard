@@ -10,6 +10,21 @@ Versioning follows [Semantic Versioning](https://semver.org).
 
 ---
 
+## [0.2.1] — 2026-03-11
+
+### Added
+- Live status feed on shard add, ask, learn, sync, index showing current step and file being processed
+- `StatusFeed` context manager in `shard/ui/status.py` with animated braille spinner
+
+### Changed
+- README: First Time Setup section moved above Commands for better onboarding flow
+
+### Fixed
+- JSON parse error when local models produce unescaped control characters in responses
+- Completion timeout for local Ollama models increased to 600s (was 120s)
+
+---
+
 ## [0.2.0] — 2026-03-10
 
 ### Added
