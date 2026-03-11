@@ -41,12 +41,11 @@ def run_add_pipeline(
         config = get_config()
 
     with StatusFeed() as status:
-        status.update("Detecting source type...")
+        status.update("Extracting content...")
         extracted = extract(input_str)
         source_label = extracted.source_type.name.lower()
 
-        status.update(f"Extracting content from {source_label}...")
-
+        status.update(f"Formatting {source_label} content...")
         formatted_notes = format_notes(extracted, single=single, on_status=status.update)
 
         status.update("Loading search index...")

@@ -7,7 +7,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import chromadb
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
 from shard import models
 from shard.config import ShardConfig
@@ -80,9 +79,12 @@ def ask(
 
     # -- 1. Connect to ChromaDB and get the collection --------------------
 
-    embedding_fn = SentenceTransformerEmbeddingFunction(
-        model_name=config.embedding_model,
-    )
+    from shard.pipeline.indexer import _load_embedding_fn
+
+    if on_status:
+        on_status("Searching vault...")
+
+    embedding_fn = _load_embedding_fn(config.embedding_model)
 
     client = chromadb.PersistentClient(path=str(config.chroma_path))
 

@@ -38,14 +38,17 @@ class StatusFeed:
         return self
 
     def __exit__(self, *exc: object) -> None:
+        with self._lock:
+            self._active = False
         self.clear()
-        self._active = False
 
     def update(self, message: str) -> None:
         """Rewrite the status line with *message* and an animated spinner."""
-        if not self._is_tty or not self._active:
+        if not self._is_tty:
             return
         with self._lock:
+            if not self._active:
+                return
             spinner = _SPINNER_CHARS[self._spinner_index % len(_SPINNER_CHARS)]
             self._spinner_index += 1
             width = shutil.get_terminal_size().columns

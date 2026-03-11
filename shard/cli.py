@@ -236,11 +236,6 @@ def learn(force: bool, show_profile: bool, show_template: bool, depth: str) -> N
             _print_style_summary(profile)
         return
 
-    import random
-
-    # Import here to match existing lazy-import pattern
-    from shard.pipeline.learner import QUICK_SAMPLE_SIZE, MAX_SAMPLE_SIZE
-
     try:
         config = get_config()
 
@@ -262,14 +257,6 @@ def learn(force: bool, show_profile: bool, show_template: bool, depth: str) -> N
                 )
                 sys.exit(1)
 
-            # Determine sample size based on depth
-            if depth == "quick":
-                sample_size = min(len(notes), QUICK_SAMPLE_SIZE)
-            elif depth == "deep":
-                sample_size = len(notes)
-            else:
-                sample_size = min(len(notes), MAX_SAMPLE_SIZE)
-
             # Deep mode confirmation for large vaults
             if depth == "deep" and len(notes) >= 50:
                 status.clear()
@@ -283,23 +270,7 @@ def learn(force: bool, show_profile: bool, show_template: bool, depth: str) -> N
                     return
 
             learner = Learner()
-
-            if depth == "quick":
-                status.update("Analysing style (quick)...")
-                profile = learner.analyze(notes, depth="quick")
-            else:
-                if depth == "deep":
-                    sampled = list(notes)
-                elif len(notes) > MAX_SAMPLE_SIZE:
-                    sampled = random.sample(notes, MAX_SAMPLE_SIZE)
-                else:
-                    sampled = list(notes)
-
-                pass1_results = learner._pass1_extract(sampled, on_status=status.update)
-
-                status.update("Synthesising style profile...")
-                profile = learner._pass2_synthesize(pass1_results, len(pass1_results))
-
+            profile = learner.analyze(notes, depth=depth, on_status=status.update)
             save_style_profile(profile, STYLE_PROFILE_PATH)
 
     except ShardError as exc:
@@ -356,8 +327,8 @@ def sync(dry_run: bool, vault_override: str | None, verbose: bool) -> None:
         if vault_override:
             config.vault_path = Path(vault_override).expanduser().resolve()
 
+        # Phase 1: backup + title index with StatusFeed
         with StatusFeed() as status:
-            # Backup
             if not dry_run:
                 timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
                 backup_dir = Path.home() / ".shard" / "backups" / timestamp
@@ -369,7 +340,6 @@ def sync(dry_run: bool, vault_override: str | None, verbose: bool) -> None:
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(md_file, dest)
 
-            # Build title index
             all_paths = walk_vault(config)
             title_map: dict[str, Path] = {}
             for i, p in enumerate(all_paths, 1):
@@ -382,18 +352,16 @@ def sync(dry_run: bool, vault_override: str | None, verbose: bool) -> None:
                     title = p.stem
                 title_map[title] = p
 
-            all_titles = list(title_map.keys())
+        all_titles = list(title_map.keys())
 
-            # Process notes
-            linker = Linker()
-            notes_updated = 0
-            links_added = 0
+        # Phase 2: find links with tqdm progress bar
+        linker = Linker()
+        notes_updated = 0
+        links_added = 0
 
-            from tqdm import tqdm
+        from tqdm import tqdm
 
-        for i, path in enumerate(
-            tqdm(all_paths, desc="● Finding links", file=sys.stderr, ncols=60), 1
-        ):
+        for path in tqdm(all_paths, desc="● Finding links", file=sys.stderr, ncols=60):
             try:
                 content = read_note(path)
             except ShardError:

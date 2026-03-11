@@ -39,7 +39,12 @@ class StyleProfile:
 class Learner:
     """Analyzes vault notes to extract the user's writing style."""
 
-    def analyze(self, notes: list[str], depth: str = "normal") -> StyleProfile:
+    def analyze(
+        self,
+        notes: list[str],
+        depth: str = "normal",
+        on_status: Callable[[str], None] | None = None,
+    ) -> StyleProfile:
         """Run style analysis on vault notes.
 
         Args:
@@ -78,9 +83,11 @@ class Learner:
                 sampled = list(notes)
 
         # PASS 1: Per-note structural extraction
-        pass1_results = self._pass1_extract(sampled)
+        pass1_results = self._pass1_extract(sampled, on_status=on_status)
 
         # PASS 2: Cross-note synthesis
+        if on_status:
+            on_status("Synthesising style profile...")
         profile = self._pass2_synthesize(pass1_results, len(sampled))
 
         return profile

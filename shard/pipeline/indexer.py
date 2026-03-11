@@ -207,6 +207,7 @@ def reindex_vault(config: ShardConfig) -> int:
 
     with StatusFeed() as status:
         status.update("Scanning vault...")
+        collection = _get_collection(config)
 
         for i, note_path in enumerate(note_paths, 1):
             status.update(f"Embedding note {i}/{len(note_paths)}: {note_path.name}...")
@@ -233,7 +234,7 @@ def reindex_vault(config: ShardConfig) -> int:
                 source_type=source_type,
             )
 
-            indexed = index_note(note, note_path, config)
+            indexed = index_note(note, note_path, config, collection=collection)
             total_chunks += indexed.num_chunks
 
     return total_chunks
