@@ -20,6 +20,7 @@ OLLAMA_PREFIX = "ollama_chat/"
 _OLLAMA_TAGS_ENDPOINT = f"{OLLAMA_BASE_URL}/api/tags"
 _OLLAMA_TIMEOUT = 2.0
 _COMPLETION_TIMEOUT = 120  # seconds; prevents indefinite hangs on stalled LLM calls
+_LOCAL_COMPLETION_TIMEOUT = 600  # seconds; local models need more time on consumer hardware
 
 MODEL_CATALOG: list[dict[str, str]] = [
     # Local Small (Free, ~4GB RAM)
@@ -190,8 +191,10 @@ def complete(prompt: str, system: str = "", model: str = "") -> str:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
-    kwargs: dict[str, Any] = {"model": model, "messages": messages, "timeout": _COMPLETION_TIMEOUT}
-    if model.startswith(OLLAMA_PREFIX):
+    is_local = model.startswith(OLLAMA_PREFIX)
+    timeout = _LOCAL_COMPLETION_TIMEOUT if is_local else _COMPLETION_TIMEOUT
+    kwargs: dict[str, Any] = {"model": model, "messages": messages, "timeout": timeout}
+    if is_local:
         kwargs["api_base"] = OLLAMA_BASE_URL
 
     try:
