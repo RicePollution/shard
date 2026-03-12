@@ -6,7 +6,7 @@ from shard.config import ShardConfig, get_config
 from shard.pipeline import IndexedNote
 from shard.pipeline.extractor import extract
 from shard.pipeline.formatter import format_notes
-from shard.pipeline.indexer import _get_collection, index_note
+from shard.pipeline.indexer import _ensure_index, get_redis_client, index_note
 from shard.ui.status import StatusFeed
 from shard.vault import save_note
 
@@ -49,7 +49,8 @@ def run_add_pipeline(
         formatted_notes = format_notes(extracted, single=single, on_status=status.update)
 
         status.update("Loading search index...")
-        collection = _get_collection(config)
+        client = get_redis_client(config)
+        _ensure_index(client)
 
         indexed_notes: list[IndexedNote] = []
         total = len(formatted_notes)
@@ -57,7 +58,7 @@ def run_add_pipeline(
         for i, formatted in enumerate(formatted_notes, 1):
             status.update(f"Saving and indexing note {i}/{total}: {formatted.title}...")
             path = save_note(formatted, config)
-            indexed = index_note(formatted, path, config, collection=collection)
+            indexed = index_note(formatted, path, config, client=client)
             indexed_notes.append(indexed)
 
     return indexed_notes

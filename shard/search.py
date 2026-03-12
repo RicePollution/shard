@@ -1,4 +1,4 @@
-"""Semantic Q&A search over indexed notes using ChromaDB and LLM completion."""
+"""Semantic Q&A search over indexed notes using Redis Stack and LLM completion."""
 
 from __future__ import annotations
 
@@ -6,10 +6,9 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-import chromadb
-
 from shard import models
-from shard.config import ShardConfig
+from shard.config import ShardConfig, check_redis
+from shard.pipeline import IndexingError
 
 logger = logging.getLogger(__name__)
 
@@ -20,13 +19,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AskResult:
-    """Container for a Q&A response with source attributions.
-
-    Attributes:
-        answer: The generated answer text.
-        sources: A list of source dicts, each containing keys such as
-            ``title``, ``path``, and ``relevance_score``.
-    """
+    """Container for a Q&A response with source attributions."""
 
     answer: str
     sources: list[dict] = field(default_factory=list)
@@ -59,90 +52,99 @@ def ask(
     top_k: int = 5,
     on_status: Callable[[str], None] | None = None,
 ) -> AskResult:
-    """Answer *question* by searching indexed notes and prompting the LLM.
+    """Answer *question* by searching indexed notes and prompting the LLM."""
+    from redis.commands.search.query import Query
 
-    Parameters
-    ----------
-    question:
-        The natural-language question to answer.
-    config:
-        A :class:`~shard.config.ShardConfig` providing ``chroma_path`` and
-        ``embedding_model``.
-    top_k:
-        Maximum number of note chunks to retrieve from ChromaDB.
+    from shard.pipeline.indexer import (
+        _INDEX_NAME,
+        _encode_vector,
+        _load_embedding_model,
+        get_redis_client,
+    )
 
-    Returns
-    -------
-    AskResult
-        The AI-generated answer together with a list of source attributions.
-    """
+    # -- 1. Check Redis availability ----------------------------------------
 
-    # -- 1. Connect to ChromaDB and get the collection --------------------
-
-    from shard.pipeline.indexer import _load_embedding_fn
+    if not check_redis(config):
+        raise IndexingError("Redis is not available. See above for setup instructions.")
 
     if on_status:
         on_status("Searching vault...")
 
-    embedding_fn = _load_embedding_fn(config.embedding_model)
+    client = get_redis_client(config)
 
-    client = chromadb.PersistentClient(path=str(config.chroma_path))
+    # -- 2. Check if index exists and has documents -------------------------
 
     try:
-        collection = client.get_collection(
-            name="shard_notes",
-            embedding_function=embedding_fn,
-        )
+        info = client.ft(_INDEX_NAME).info()
+        num_docs = int(info.get("num_docs", info.get(b"num_docs", 0)))
     except Exception:
-        # Collection does not exist yet.
-        return AskResult(
-            answer=(
-                "No notes indexed yet. Run 'shard add' to import content."
-            ),
-            sources=[],
-        )
-
-    # -- 2. Handle empty collection ---------------------------------------
-
-    if collection.count() == 0:
         return AskResult(
             answer="No notes indexed yet. Run 'shard add' to import content.",
             sources=[],
         )
 
-    # -- 3. Query ChromaDB ------------------------------------------------
+    if num_docs == 0:
+        return AskResult(
+            answer="No notes indexed yet. Run 'shard add' to import content.",
+            sources=[],
+        )
 
-    results = collection.query(
-        query_texts=[question],
-        n_results=min(top_k, collection.count()),
+    # -- 3. Embed the question ----------------------------------------------
+
+    model = _load_embedding_model(config.embedding_model)
+    query_embedding = model.encode(question)
+    query_bytes = _encode_vector(query_embedding)
+
+    # -- 4. KNN vector search -----------------------------------------------
+
+    k = min(top_k, num_docs)
+
+    q = (
+        Query(f"*=>[KNN {k} @embedding $vec AS vector_score]")
+        .sort_by("vector_score")
+        .return_fields("content", "title", "source_path", "source_file", "vector_score")
+        .paging(0, k)
+        .dialect(2)
     )
 
-    documents: list[str] = results.get("documents", [[]])[0]
-    metadatas: list[dict] = results.get("metadatas", [[]])[0]
-    distances: list[float] = results.get("distances", [[]])[0]
+    try:
+        results = client.ft(_INDEX_NAME).search(q, query_params={"vec": query_bytes})
+    except Exception as exc:
+        logger.error("Redis search failed: %s", exc)
+        return AskResult(
+            answer="Search failed. Try running 'shard index' to rebuild the index.",
+            sources=[],
+        )
 
-    if not documents:
+    if not results.docs:
         return AskResult(
             answer="No relevant notes found for your question.",
             sources=[],
         )
 
     if on_status:
-        on_status(f"Found {len(documents)} relevant chunks — generating answer...")
+        on_status(f"Found {len(results.docs)} relevant chunks — generating answer...")
 
-    # -- 4. Build context string ------------------------------------------
+    # -- 5. Build context string --------------------------------------------
 
     context_parts: list[str] = []
-    for idx, (text, meta) in enumerate(zip(documents, metadatas), start=1):
-        title = meta.get("title", "Untitled")
-        source = meta.get("source", "unknown")
-        context_parts.append(
-            f"[Source {idx}: {title} ({source})]\n{text}"
-        )
+    raw_sources: list[tuple[str, str, float]] = []
+
+    for idx, doc in enumerate(results.docs, start=1):
+        content = doc.content if hasattr(doc, "content") else ""
+        title = doc.title if hasattr(doc, "title") else "Untitled"
+        source_path = doc.source_path if hasattr(doc, "source_path") else "unknown"
+        score_raw = float(doc.vector_score) if hasattr(doc, "vector_score") else 1.0
+
+        # Cosine distance is in [0, 2]; convert to relevance in [0, 1]
+        relevance = round(1.0 - (score_raw / 2.0), 4)
+
+        context_parts.append(f"[Source {idx}: {title} ({source_path})]\n{content}")
+        raw_sources.append((title, source_path, relevance))
 
     context_block = "\n\n---\n\n".join(context_parts)
 
-    # -- 5. Build prompt and call the LLM ---------------------------------
+    # -- 6. Build prompt and call the LLM -----------------------------------
 
     prompt = (
         f"Context from notes:\n\n{context_block}\n\n---\n\n"
@@ -153,31 +155,22 @@ def ask(
 
     answer = models.complete(prompt=prompt, system=_QA_SYSTEM)
 
-    # -- 6. Extract unique sources ----------------------------------------
+    # -- 7. Extract unique sources ------------------------------------------
 
     seen_keys: set[str] = set()
     sources: list[dict] = []
 
-    for meta, distance in zip(metadatas, distances):
-        title = meta.get("title", "Untitled")
-        path = meta.get("source", "unknown")
-
+    for title, path, relevance in raw_sources:
         key = f"{title}::{path}"
         if key in seen_keys:
             continue
         seen_keys.add(key)
-
-        # ChromaDB returns L2 distances; convert to a 0-1 relevance score.
-        # Smaller distance == higher relevance.  We use 1/(1+d) as a simple
-        # monotonically-decreasing mapping.
-        relevance_score = round(1.0 / (1.0 + distance), 4)
-
         sources.append({
             "title": title,
             "path": path,
-            "relevance_score": relevance_score,
+            "relevance_score": relevance,
         })
 
-    # -- 7. Return --------------------------------------------------------
+    # -- 8. Return ----------------------------------------------------------
 
     return AskResult(answer=answer, sources=sources)

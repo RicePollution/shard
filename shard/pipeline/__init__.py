@@ -22,7 +22,7 @@ class FormattingError(ShardError):
 
 
 class IndexingError(ShardError):
-    """Failed to index a note in ChromaDB."""
+    """Failed to index a note in the vector store."""
 
 
 class ConfigError(ShardError):

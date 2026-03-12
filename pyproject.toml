@@ -13,7 +13,7 @@ dependencies = [
     "litellm",
     "click",
     "python-dotenv",
-    "chromadb",
+    "redis>=5.0.0",
     "sentence-transformers",
     "pdfplumber",
     "httpx",

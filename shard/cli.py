@@ -164,11 +164,11 @@ def ask(question: str, top_k: int) -> None:
 
 @cli.command("index")
 def index() -> None:
-    """Reindex all shard notes in the vault into ChromaDB.
+    """Reindex all shard notes in the vault into Redis Stack.
 
     Iterates every note under <vault>/Imported/Shards/, chunks its content,
-    and upserts the chunks into the local ChromaDB collection so they are
-    available for semantic search.
+    embeds each chunk with the configured sentence-transformers model, and
+    stores the vectors in Redis Stack so they are available for semantic search.
     """
     from shard.pipeline.indexer import reindex_vault
 
@@ -840,16 +840,18 @@ def open_(query: str) -> None:
 _SETTABLE_FIELDS = {
     "vault_path",
     "model",
-    "chroma_path",
     "embedding_model",
+    "redis_host",
+    "redis_port",
     "notes_subfolder",
 }
 
 _FIELD_HELP = {
     "vault_path": "Absolute path to your Obsidian vault directory.",
     "model": "LiteLLM model string used for note generation (e.g. ollama_chat/qwen2.5:3b).",
-    "chroma_path": "Directory where ChromaDB persists its vector index.",
     "embedding_model": "Sentence-transformers model name for vector embeddings.",
+    "redis_host": "Hostname for the Redis Stack instance (default: localhost).",
+    "redis_port": "Port for the Redis Stack instance (default: 6379).",
     "notes_subfolder": "Vault-relative subfolder for new notes (empty = vault root).",
 }
 
@@ -925,9 +927,18 @@ def _handle_config_set(raw: str) -> None:
         _err.print(f"[bold red]Error:[/bold red] {exc}")
         sys.exit(1)
 
-    # Coerce Path fields.
-    if key in ("vault_path", "chroma_path"):
+    # Coerce Path and numeric fields.
+    if key == "vault_path":
         coerced: object = Path(value).expanduser().resolve()
+    elif key == "redis_port":
+        try:
+            coerced = int(value)
+        except ValueError:
+            _err.print(
+                f"[bold red]Error:[/bold red] redis_port must be an integer, got: "
+                f"[italic]{value}[/italic]"
+            )
+            sys.exit(1)
     elif key == "notes_subfolder" and ".." in value:
         _err.print(
             "[bold red]Error:[/bold red] notes_subfolder must not contain '..' "
@@ -972,8 +983,9 @@ def _display_config() -> None:
     rows = [
         ("vault_path",      str(cfg.vault_path)),
         ("model",           cfg.model or "[dim](not set)[/dim]"),
-        ("chroma_path",     str(cfg.chroma_path)),
         ("embedding_model", cfg.embedding_model),
+        ("redis_host",      cfg.redis_host),
+        ("redis_port",      str(cfg.redis_port)),
         ("notes_subfolder", cfg.notes_subfolder or "[dim](vault root)[/dim]"),
     ]
 
