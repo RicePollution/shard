@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "shard-cli"
-version = "0.2.1"
+version = "0.3.0"
 description = "Ingest PDFs, URLs, YouTube, and text into Obsidian as structured AI-generated notes with semantic search."
 readme = "README.md"
 license = "MIT"

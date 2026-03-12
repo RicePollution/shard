@@ -6,7 +6,31 @@ Versioning follows [Semantic Versioning](https://semver.org).
 
 ---
 
-## [Unreleased]
+## [0.3.0] — 2026-03-11
+
+### Breaking Changes
+- **Redis Stack replaces ChromaDB** — `shard ask` and `shard index` now require Redis Stack with RediSearch. The `chroma_path` config field is no longer used. A one-time migration notice will appear on first run.
+
+### Added
+- Concurrent note generation — Stage B runs via `asyncio.gather` with Semaphore(3)
+- Style matching overhaul — `shard learn` collects real vault excerpts and forbidden patterns for few-shot prompting
+- Hard 3–5 subnote enforcement in Python after model response, with automatic retry
+- `shard add --instruction/-i` flag for custom formatting directives
+- Live model list — `shard model list` fetches from OpenAI/Anthropic APIs with 24h disk cache
+- Hardcoded model lists for Groq, Gemini, and Mistral providers
+- Redis connection pooling and HNSW vector index with cosine distance
+- Async LLM completions via `litellm.acompletion`
+- Redis Stack prerequisite and troubleshooting sections in README
+
+### Changed
+- Vector store backend from ChromaDB to Redis Stack (RediSearch + HNSW)
+- Config fields: removed `chroma_path`, added `redis_host`, `redis_port`, `redis_password`
+
+### Fixed
+- Added `numpy` and `requests` as explicit dependencies (were transitive only)
+- Removed unused `python-dotenv` dependency
+- Removed dead `DEFAULT_CHROMA_PATH` constant
+- Deduplicated Ollama model pull logic between config.py and models.py
 
 ---
 
@@ -54,12 +78,12 @@ Versioning follows [Semantic Versioning](https://semver.org).
 - Initial release
 - `shard add` — ingest PDF, URL, YouTube, text, and stdin
 - `shard ask` — semantic search with AI-generated answers
-- `shard index` — rebuild ChromaDB vector index
+- `shard index` — rebuild vector search index
 - `shard list` — browse imported notes as a table
 - `shard open` — fuzzy-match and open notes in Obsidian
 - `shard config` — setup wizard and configuration management
 - `shard learn` — vault style analysis with fingerprint output
 - `shard sync` — automatic [[wikilink]] injection with backup
 - Local-first with Ollama, cloud support via LiteLLM
-- ChromaDB vector search with sentence-transformers embeddings
+- Vector search with sentence-transformers embeddings
 - YAML frontmatter with structured metadata
