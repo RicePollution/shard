@@ -359,8 +359,10 @@ def _format_atomic_notes(
     parent_summary = decomposition["parent_summary"]
     subtopics = decomposition["subtopics"]
 
-    if not subtopics:
-        # Fallback: if decomposition produced no subtopics, return single note
+    # Hard enforce subnote count: max 5, min 3 (otherwise single note)
+    if len(subtopics) > 5:
+        subtopics = subtopics[:5]
+    if len(subtopics) < 3:
         return [format_note(extracted)]
 
     all_titles = [st["title"] for st in subtopics]
@@ -573,7 +575,9 @@ def _stage_a_decompose(text: str, extracted: ExtractedContent) -> dict[str, Any]
         "fundamental building blocks.\n\n"
         "Rules for splitting:\n"
         "- Each topic must be genuinely distinct and self-contained\n"
-        "- Aim for 3-8 topics for most content (more if content is very broad)\n"
+        "- You MUST return between 3 and 5 subtopics. No more, no fewer.\n"
+        "- If the content truly only has 1-2 distinct concepts, return exactly 2\n"
+        "- If the content has more than 5 distinct concepts, pick the 5 most important\n"
         "- Do not create a topic for introductions, conclusions, or meta info\n"
         "- Each topic should be specific enough to fill 100-300 words\n"
         "- The topics together should cover the entire source completely\n\n"
