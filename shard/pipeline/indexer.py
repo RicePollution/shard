@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import redis
 from redis.commands.search.field import NumericField, TagField, TextField, VectorField
-from redis.commands.search.indexDefinition import IndexDefinition, IndexType
+from redis.commands.search.index_definition import IndexDefinition, IndexType
 from rich.console import Console
 
 from shard.config import ShardConfig, check_redis
