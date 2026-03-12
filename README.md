@@ -14,7 +14,7 @@ Shard ingests PDFs, URLs, YouTube videos, and text into your Obsidian vault as s
 
 - 📄 Multi-source ingestion (PDF, URL, YouTube, text, stdin)
 - 🤖 AI-powered formatting with auto-generated titles, tags, summaries
-- 🔍 Semantic search with ChromaDB vector embeddings
+- 🔍 Semantic search with Redis Stack vector embeddings
 - 🏠 Local-first with Ollama — no cloud, no API keys, no cost
 - 📝 Native Obsidian integration with YAML frontmatter
 - 🔌 Flexible model support via LiteLLM (Ollama, OpenAI, Anthropic, Groq, etc.)
@@ -88,6 +88,7 @@ Ingest any source into your vault as atomic notes.
 | Flag | Description |
 |---|---|
 | `--single` | One note, no splitting |
+| `--instruction`, `-i` | Custom formatting instruction (e.g. "focus on code examples") |
 
 ```bash
 shard add "https://example.com"
@@ -95,6 +96,7 @@ shard add /path/to/paper.pdf
 shard add "https://youtube.com/watch?v=..."
 shard add "raw text or idea"
 cat file.txt | shard add -
+shard add "https://example.com" -i "focus on practical examples"
 ```
 
 ### shard ask
@@ -483,6 +485,78 @@ Verify:
 ollama run qwen2.5:3b "say hello"
 ```
 
+### 🗄️ Redis Stack
+
+Redis Stack provides the vector search engine for `shard ask`. It stores note embeddings and runs fast similarity queries.
+
+Check if installed:
+
+```bash
+redis-cli ping
+```
+
+<details>
+<summary>🐧 Arch Linux</summary>
+
+```bash
+yay -S redis-stack-server
+sudo systemctl enable --now redis-stack-server
+```
+
+</details>
+
+<details>
+<summary>🐧 Ubuntu / Debian</summary>
+
+```bash
+curl -fsSL https://packages.redis.io/gpg | sudo gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/redis.list
+sudo apt update
+sudo apt install redis-stack-server
+sudo systemctl enable --now redis-stack-server
+```
+
+</details>
+
+<details>
+<summary>🍎 macOS</summary>
+
+```bash
+brew tap redis-stack/redis-stack
+brew install redis-stack-server
+redis-stack-server --daemonize yes
+```
+
+</details>
+
+<details>
+<summary>🪟 Windows</summary>
+
+Use Docker:
+
+```powershell
+docker run -d --name redis-stack -p 6379:6379 redis/redis-stack-server:latest
+```
+
+</details>
+
+<details>
+<summary>🐳 Docker (any OS)</summary>
+
+```bash
+docker run -d --name redis-stack -p 6379:6379 redis/redis-stack-server:latest
+```
+
+</details>
+
+Verify:
+
+```bash
+redis-cli ping  # Should print PONG
+```
+
+> 💡 Redis Stack must be running whenever you use `shard ask` or `shard index`. The `shard add` command indexes notes automatically.
+
 ### 🗃️ Obsidian Vault
 
 Obsidian is a note-taking app that stores notes as plain markdown files in a folder called a "vault." Shard saves generated notes directly into your vault.
@@ -624,7 +698,9 @@ shard --help
 |-------|---------|-------------|
 | `vault_path` | *(set during setup)* | Absolute path to your Obsidian vault |
 | `model` | `ollama_chat/qwen2.5:3b` | LiteLLM model string for note generation |
-| `chroma_path` | `~/.local/share/shard/chroma` | Directory for ChromaDB vector index |
+| `redis_host` | `localhost` | Redis Stack hostname |
+| `redis_port` | `6379` | Redis Stack port |
+| `redis_password` | `""` | Redis password (if set) |
 | `embedding_model` | `all-MiniLM-L6-v2` | Sentence-transformers model for embeddings |
 | `custom_models` | `[]` | User-registered model descriptors |
 | `api_keys` | `{}` | Provider API keys (alternative to env vars) |
@@ -641,7 +717,7 @@ Your Input → Extractor → Formatter (AI) → Indexer → Obsidian Vault
 
 - **Extractor**: Pulls text from PDFs (pdfplumber), URLs (httpx + BeautifulSoup), YouTube (transcript API), or stdin
 - **Formatter**: Sends text to your LLM to generate a structured note with title, tags, summary, and markdown body
-- **Indexer**: Chunks the note text, generates vector embeddings (sentence-transformers), and stores them in ChromaDB for semantic search
+- **Indexer**: Chunks the note text, generates vector embeddings (sentence-transformers), and stores them in Redis Stack for semantic search
 - **Vault**: Saves the note as a markdown file with YAML frontmatter in your Obsidian vault
 
 ---
@@ -715,6 +791,28 @@ Pull the default model:
 ```bash
 ollama pull qwen2.5:3b
 ```
+
+</details>
+
+<details>
+<summary>❌ Redis is not available</summary>
+
+Redis Stack isn't running or doesn't have the RediSearch module loaded.
+
+**Start Redis Stack:**
+
+```bash
+# Linux (systemd)
+sudo systemctl start redis-stack-server
+
+# macOS (Homebrew)
+redis-stack-server --daemonize yes
+
+# Docker
+docker start redis-stack
+```
+
+If you have plain Redis without the Stack modules, you need Redis Stack instead. See the [Redis Stack prerequisite](#️-redis-stack).
 
 </details>
 
