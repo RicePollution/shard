@@ -72,8 +72,10 @@ def format_note(extracted: ExtractedContent) -> FormattedNote:
 
     parsed = _parse_response(response)
 
+    title = _normalize_title(parsed["title"])
+
     return FormattedNote(
-        title=parsed["title"],
+        title=title,
         tags=[t.strip() for t in parsed["tags"].split(",") if t.strip()],
         summary=parsed["summary"],
         body=parsed["body"],
@@ -87,8 +89,10 @@ def _build_prompt(extracted: ExtractedContent, text: str) -> tuple[str, str]:
     """Build the system prompt and user prompt for note formatting.
 
     If a style profile exists at ``~/.shard/style.json``, uses a styled
-    prompt that matches the user's vault writing patterns.  Otherwise falls
-    back to the generic ``SYSTEM_PROMPT``.
+    prompt that matches the user's vault writing patterns.  When the profile
+    contains ``real_excerpts``, a strict exemplar-based prompt is used to
+    produce notes that are indistinguishable from the user's own writing.
+    Otherwise falls back to the generic ``SYSTEM_PROMPT``.
 
     Returns:
         A ``(system, user_prompt)`` tuple.
@@ -97,35 +101,80 @@ def _build_prompt(extracted: ExtractedContent, text: str) -> tuple[str, str]:
     source_label = extracted.source_type.name.lower()
 
     if style is not None:
-        # Style-aware prompt — replaces generic instructions entirely.
-        fingerprints = "\n".join(style.get("fingerprints", []))
-        tone = "\n".join(style.get("tone_examples", []))
+        real_excerpts: list[str] = style.get("real_excerpts", [])
+        forbidden_patterns: list[str] = style.get("forbidden_patterns", [])
+        fingerprints: list[str] = style.get("fingerprints", [])
+        frontmatter_template: str = style.get("frontmatter_template", "")
 
-        system = (
-            "You are writing a new note for an Obsidian vault. You must "
-            "match the owner's exact writing style — do not deviate.\n\n"
-            "STYLE FINGERPRINT (follow these rules exactly):\n"
-            f"{fingerprints}\n\n"
-            "FRONTMATTER TEMPLATE (use this exact structure):\n"
-            f"{style.get('frontmatter_template', '')}\n\n"
-            "NOTE TEMPLATE (follow this skeleton):\n"
-            f"{style.get('template', '')}\n\n"
-            "STYLE RULES (detailed guide):\n"
-            f"{style.get('style_rules', '')}\n\n"
-            "TONE EXAMPLES (match this voice exactly):\n"
-            f"{tone}\n\n"
-            "Now write a new note about the following content.\n"
-            "Use the template above as your structure. Fill in real content.\n"
-            "Do not add sections that aren't in the template.\n"
-            "Do not change the heading names.\n"
-            f"Match the tag format exactly: {style.get('tag_format', '')}\n\n"
-            "You MUST output exactly the following sections in order, each "
-            "starting on its own line:\n\n"
-            "TITLE: A concise, descriptive title for the note\n"
-            "TAGS: comma-separated tags matching the vault's format\n"
-            "SUMMARY: A 1-2 sentence summary of the content\n"
-            "BODY:\nThe full note body following the template above."
-        )
+        if real_excerpts:
+            # Strict exemplar-based prompt for high-fidelity style matching.
+            excerpts_block = "\n---\n".join(real_excerpts)
+
+            fingerprint_rules = "\n".join(
+                f"{i + 1}. {fp}" for i, fp in enumerate(fingerprints)
+            )
+
+            forbidden_block = ""
+            if forbidden_patterns:
+                forbidden_block = (
+                    "\n\nTHINGS YOU MUST NEVER DO:\n"
+                    + "\n".join(
+                        f"{i + 1}. {fp}"
+                        for i, fp in enumerate(forbidden_patterns)
+                    )
+                )
+
+            system = (
+                "You are a note-writing assistant. Your ONLY job is to write notes that are\n"
+                "indistinguishable from notes written by this specific person. You must follow\n"
+                "their style exactly.\n\n"
+                "REAL EXAMPLES of their notes (copy this style exactly):\n"
+                f"---\n{excerpts_block}\n---\n\n"
+                "RULES YOU MUST FOLLOW (these are not suggestions):\n"
+                f"{fingerprint_rules}\n"
+                f"{forbidden_block}\n\n"
+                "FRONTMATTER: always use exactly this structure:\n"
+                f"{frontmatter_template}\n\n"
+                "The title field must use plain spaces, never hyphens or underscores.\n"
+                "Example: 'The American Revolution' not 'The-American-Revolution'\n\n"
+                "If you deviate from any of these rules, you have failed.\n\n"
+                "You MUST output exactly the following sections in order, each "
+                "starting on its own line:\n\n"
+                "TITLE: A concise, descriptive title for the note\n"
+                "TAGS: comma-separated tags matching the vault's format\n"
+                "SUMMARY: A 1-2 sentence summary of the content\n"
+                "BODY:\nThe full note body following the style above."
+            )
+        else:
+            # Legacy style-aware prompt (no real excerpts available).
+            fp_block = "\n".join(fingerprints)
+            tone = "\n".join(style.get("tone_examples", []))
+
+            system = (
+                "You are writing a new note for an Obsidian vault. You must "
+                "match the owner's exact writing style — do not deviate.\n\n"
+                "STYLE FINGERPRINT (follow these rules exactly):\n"
+                f"{fp_block}\n\n"
+                "FRONTMATTER TEMPLATE (use this exact structure):\n"
+                f"{frontmatter_template}\n\n"
+                "NOTE TEMPLATE (follow this skeleton):\n"
+                f"{style.get('template', '')}\n\n"
+                "STYLE RULES (detailed guide):\n"
+                f"{style.get('style_rules', '')}\n\n"
+                "TONE EXAMPLES (match this voice exactly):\n"
+                f"{tone}\n\n"
+                "Now write a new note about the following content.\n"
+                "Use the template above as your structure. Fill in real content.\n"
+                "Do not add sections that aren't in the template.\n"
+                "Do not change the heading names.\n"
+                f"Match the tag format exactly: {style.get('tag_format', '')}\n\n"
+                "You MUST output exactly the following sections in order, each "
+                "starting on its own line:\n\n"
+                "TITLE: A concise, descriptive title for the note\n"
+                "TAGS: comma-separated tags matching the vault's format\n"
+                "SUMMARY: A 1-2 sentence summary of the content\n"
+                "BODY:\nThe full note body following the template above."
+            )
     else:
         system = SYSTEM_PROMPT
 
@@ -136,6 +185,16 @@ def _build_prompt(extracted: ExtractedContent, text: str) -> tuple[str, str]:
     prompt += f"\n---\n\n{text}"
 
     return system, prompt
+
+
+def _normalize_title(title: str) -> str:
+    """Normalize a note title to use plain spaces instead of hyphens or underscores.
+
+    Replaces hyphens and underscores with spaces and collapses any runs of
+    multiple spaces into a single space.
+    """
+    title = title.replace("-", " ").replace("_", " ")
+    return " ".join(title.split())
 
 
 def _load_style_data() -> dict | None:
@@ -430,8 +489,10 @@ async def _stage_b_generate_subtopic_async(
 
     data = _parse_json_response(response)
 
+    title = _normalize_title(data.get("title", subtopic["title"]))
+
     return FormattedNote(
-        title=data.get("title", subtopic["title"]),
+        title=title,
         tags=data.get("tags", []),
         summary=subtopic.get("focus", ""),
         body=data.get("markdown", ""),
@@ -441,14 +502,58 @@ async def _stage_b_generate_subtopic_async(
     )
 
 
-def _build_style_injection(style: dict | None) -> str:
-    """Build a style injection string from the style profile, if available."""
+def _build_style_injection(style: dict[str, Any] | None) -> str:
+    """Build a style injection string from the style profile, if available.
+
+    When the profile contains ``real_excerpts``, a strict exemplar-based
+    injection is produced.  Otherwise falls back to the legacy fingerprint
+    injection for backward compatibility with older style profiles.
+    """
     if style is None:
         return ""
-    fingerprints = "\n".join(style.get("fingerprints", []))
+
+    real_excerpts: list[str] = style.get("real_excerpts", [])
+    forbidden_patterns: list[str] = style.get("forbidden_patterns", [])
+    fingerprints: list[str] = style.get("fingerprints", [])
+
+    if real_excerpts:
+        excerpts_block = "\n---\n".join(real_excerpts)
+
+        fingerprint_rules = "\n".join(
+            f"{i + 1}. {fp}" for i, fp in enumerate(fingerprints)
+        )
+
+        forbidden_block = ""
+        if forbidden_patterns:
+            forbidden_block = (
+                "\nTHINGS YOU MUST NEVER DO:\n"
+                + "\n".join(
+                    f"{i + 1}. {fp}" for i, fp in enumerate(forbidden_patterns)
+                )
+                + "\n"
+            )
+
+        return (
+            "\nYour ONLY job is to write notes that are indistinguishable from "
+            "notes written by this specific person.\n\n"
+            "REAL EXAMPLES of their notes (copy this style exactly):\n"
+            f"---\n{excerpts_block}\n---\n\n"
+            "RULES YOU MUST FOLLOW (these are not suggestions):\n"
+            f"{fingerprint_rules}\n\n"
+            f"{forbidden_block}"
+            f"FRONTMATTER: always use exactly this structure:\n"
+            f"{style.get('frontmatter_template', '')}\n\n"
+            "The title field must use plain spaces, never hyphens or underscores.\n"
+            "Example: 'The American Revolution' not 'The-American-Revolution'\n\n"
+            f"TAG FORMAT: {style.get('tag_format', '')}\n"
+            "If you deviate from any of these rules, you have failed.\n"
+        )
+
+    # Legacy fallback — no real excerpts available.
+    fp_block = "\n".join(fingerprints)
     return (
         "\nMatch the user's writing style exactly:\n"
-        f"STYLE FINGERPRINT:\n{fingerprints}\n"
+        f"STYLE FINGERPRINT:\n{fp_block}\n"
         f"TAG FORMAT: {style.get('tag_format', '')}\n"
         f"TEMPLATE:\n{style.get('template', '')}\n"
     )

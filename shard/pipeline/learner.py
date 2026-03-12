@@ -34,6 +34,8 @@ class StyleProfile:
     tone_examples: list[str]
     analyzed_at: str
     notes_sampled: int
+    forbidden_patterns: list[str] = field(default_factory=list)
+    real_excerpts: list[str] = field(default_factory=list)
 
 
 class Learner:
@@ -137,7 +139,14 @@ class Learner:
                 "  \"opens_with\": \"heading / paragraph / bullet / frontmatter\",\n"
                 "  \"closes_with\": \"tags / related links / nothing / summary\",\n"
                 "  \"word_count\": 0,\n"
-                "  \"sentence_examples\": [\"copy 2-3 actual sentences verbatim\"]\n"
+                "  \"sentence_examples\": [\"copy 2-3 actual sentences verbatim\"],\n"
+                "  \"opening_line_pattern\": \"exact pattern of first line e.g. starts with bold one-liner summary\",\n"
+                "  \"closing_pattern\": \"exactly how the note ends\",\n"
+                "  \"link_density\": \"how many [[wikilinks]] per 100 words approx\",\n"
+                "  \"uses_horizontal_rules\": true,\n"
+                "  \"list_vs_prose_ratio\": \"mostly lists / mostly prose / mixed\",\n"
+                "  \"frontmatter_example\": \"copy exact frontmatter block verbatim\",\n"
+                "  \"real_note_excerpt\": \"copy 3-5 consecutive sentences verbatim from the middle of the note — do not paraphrase\"\n"
                 "}"
             )
 
@@ -231,10 +240,30 @@ class Learner:
         Raises:
             LearnError: If model call or JSON parsing fails.
         """
+        # Collect real note excerpts from pass 1 results for pass-through.
+        collected_excerpts: list[str] = []
+        for result in pass1_results:
+            excerpt = result.get("real_note_excerpt", "")
+            if excerpt and isinstance(excerpt, str):
+                collected_excerpts.append(excerpt)
+
+        excerpts_block = ""
+        if collected_excerpts:
+            numbered = "\n".join(
+                f"EXCERPT {i + 1}:\n{exc}"
+                for i, exc in enumerate(collected_excerpts[:5])
+            )
+            excerpts_block = (
+                "\n\nREAL EXCERPTS from the vault (pass these through verbatim "
+                "into the real_excerpts field — do not paraphrase):\n"
+                f"{numbered}\n"
+            )
+
         prompt = (
             f"You have analyzed {notes_sampled} notes from a personal Obsidian vault.\n"
             "Here are the structural findings from each note:\n\n"
             f"{json.dumps(pass1_results, indent=2)}\n\n"
+            f"{excerpts_block}\n"
             "Now synthesize this into:\n\n"
             "1. A STYLE RULES document — concrete rules a writer must follow "
             "to match this vault. Be specific. Instead of 'uses headers' "
@@ -260,6 +289,13 @@ class Learner:
             "Example bad fingerprints (too vague):\n"
             "  - Uses markdown formatting\n"
             "  - Has a casual tone\n\n"
+            "4. FORBIDDEN PATTERNS — list things this user NEVER does. "
+            "Look at what is consistently absent across all notes. "
+            "Examples: 'never uses emoji', 'never writes in first person', "
+            "'never uses > blockquotes'. Be specific.\n\n"
+            "5. REAL EXCERPTS — copy exactly 3 verbatim multi-sentence "
+            "excerpts from the real_note_excerpt fields above. Do not "
+            "paraphrase or modify them in any way.\n\n"
             "Return ONLY a JSON object:\n"
             "{\n"
             "  \"style_rules\": \"full markdown style rules document\",\n"
@@ -269,7 +305,9 @@ class Learner:
             "  \"heading_order\": [\"typical heading sequence if consistent\"],\n"
             "  \"tag_format\": \"exact format e.g. #lowercase-hyphen\",\n"
             "  \"avg_word_count\": 0,\n"
-            "  \"tone_examples\": [\"2-3 verbatim sentence examples from notes\"]\n"
+            "  \"tone_examples\": [\"2-3 verbatim sentence examples from notes\"],\n"
+            "  \"forbidden_patterns\": [\"list of things the user NEVER does\"],\n"
+            "  \"real_excerpts\": [\"3 verbatim excerpts copied from the notes above\"]\n"
             "}"
         )
 
@@ -291,6 +329,8 @@ class Learner:
             tone_examples=data.get("tone_examples", []),
             analyzed_at=datetime.now(tz=timezone.utc).isoformat(),
             notes_sampled=notes_sampled,
+            forbidden_patterns=data.get("forbidden_patterns", []),
+            real_excerpts=data.get("real_excerpts", []),
         )
 
 
@@ -383,4 +423,6 @@ def load_style_profile(path: Path) -> StyleProfile | None:
         tone_examples=data.get("tone_examples", []),
         analyzed_at=data.get("analyzed_at", ""),
         notes_sampled=int(data.get("notes_sampled", 0)),
+        forbidden_patterns=data.get("forbidden_patterns", []),
+        real_excerpts=data.get("real_excerpts", []),
     )
