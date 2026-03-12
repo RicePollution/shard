@@ -7,6 +7,7 @@ clean note bodies.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -14,7 +15,7 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import Any
 
-from shard.models import complete
+from shard.models import async_complete, complete
 from shard.pipeline import ExtractedContent, FormattedNote, FormattingError
 
 logger = logging.getLogger(__name__)
@@ -305,19 +306,19 @@ def _format_atomic_notes(
 
     all_titles = [st["title"] for st in subtopics]
 
-    # ── Stage B: Generate one note per subtopic ──
-    notes: list[FormattedNote] = []
+    # ── Stage B: Generate one note per subtopic (concurrent) ──
+    if on_status:
+        on_status(f"Generating {len(subtopics)} notes concurrently...")
 
-    for i, subtopic in enumerate(subtopics, 1):
-        if on_status:
-            on_status(f"Writing note {i}/{len(subtopics)}: {subtopic['title']}...")
-        note = _stage_b_generate_subtopic(
-            subtopic, parent_topic, parent_summary, all_titles,
-            style_injection, extracted,
-        )
-        notes.append(note)
+    notes = asyncio.run(_generate_subtopics_concurrent(
+        subtopics, parent_topic, parent_summary, all_titles,
+        style_injection, extracted,
+    ))
 
     # ── Parent index note ──
+    if on_status:
+        on_status(f"Saving and indexing {len(notes)} notes...")
+
     parent_note = _generate_parent_index(
         parent_topic, parent_summary, subtopics, notes,
         style_injection, extracted,
@@ -325,6 +326,119 @@ def _format_atomic_notes(
 
     # Parent first, then subtopics
     return [parent_note] + notes
+
+
+async def _generate_subtopics_concurrent(
+    subtopics: list[dict[str, str]],
+    parent_topic: str,
+    parent_summary: str,
+    all_titles: list[str],
+    style_injection: str,
+    extracted: ExtractedContent,
+) -> list[FormattedNote]:
+    """Run Stage B note generation concurrently with a semaphore-capped concurrency.
+
+    Up to 3 subtopic notes are generated simultaneously.  Any individual
+    failure is retried exactly once before the entire batch is aborted.
+    """
+    sem = asyncio.Semaphore(3)
+
+    async def generate_one(subtopic: dict[str, str]) -> FormattedNote:
+        async with sem:
+            return await _stage_b_generate_subtopic_async(
+                subtopic, parent_topic, parent_summary, all_titles,
+                style_injection, extracted,
+            )
+
+    tasks = [generate_one(st) for st in subtopics]
+    results: list[FormattedNote | BaseException] = await asyncio.gather(
+        *tasks, return_exceptions=True
+    )
+
+    final_notes: list[FormattedNote] = []
+    for i, result in enumerate(results):
+        if isinstance(result, BaseException):
+            subtopic = subtopics[i]
+            logger.warning(
+                "Note generation failed for '%s', retrying: %s",
+                subtopic["title"], result,
+            )
+            try:
+                result = await _stage_b_generate_subtopic_async(
+                    subtopic, parent_topic, parent_summary, all_titles,
+                    style_injection, extracted,
+                )
+            except Exception as exc:
+                raise FormattingError(
+                    f"Failed to generate note for '{subtopic['title']}' after retry: {exc}"
+                ) from exc
+        final_notes.append(result)  # type: ignore[arg-type]
+
+    return final_notes
+
+
+async def _stage_b_generate_subtopic_async(
+    subtopic: dict[str, str],
+    parent_topic: str,
+    parent_summary: str,
+    all_titles: list[str],
+    style_injection: str,
+    extracted: ExtractedContent,
+) -> FormattedNote:
+    """Async variant of :func:`_stage_b_generate_subtopic` using ``async_complete``."""
+    sibling_titles = [t for t in all_titles if t != subtopic["title"]]
+    siblings_str = "\n".join(f"- [[{t}]]" for t in sibling_titles)
+
+    system = (
+        "You are writing an atomic Obsidian note. An atomic note covers "
+        "ONLY one specific concept — nothing else."
+    )
+    prompt = (
+        f"Write an atomic Obsidian note about this specific topic.\n\n"
+        f"Topic: {subtopic['title']}\n"
+        f"Focus: {subtopic.get('focus', '')}\n"
+        f"Source material: {subtopic.get('relevant_section', '')}\n"
+        f"Overall source context: {parent_summary}\n\n"
+        "All other notes being created from this same source:\n"
+        f"{siblings_str}\n\n"
+        "Rules:\n"
+        "- Cover ONLY the stated topic — nothing else\n"
+        "- Length: 100-300 words of actual content\n"
+        "- Use [[wikilinks]] to link to the other notes listed above "
+        "wherever they are genuinely relevant\n"
+        f"- Link back to the parent index note: [[{parent_topic}]]\n"
+        "- End with a ## Links section listing all sibling note links\n\n"
+        f"{style_injection}\n\n"
+        "Return ONLY a JSON object:\n"
+        "{\n"
+        '  "title": "exact note title",\n'
+        '  "slug": "kebab-case-filename",\n'
+        '  "tags": ["tag1", "tag2"],\n'
+        '  "markdown": "complete note content including any frontmatter"\n'
+        "}"
+    )
+
+    try:
+        response = await async_complete(prompt, system=system)
+    except Exception as exc:
+        raise FormattingError(
+            f"Model call failed generating note for '{subtopic['title']}': {exc}"
+        ) from exc
+
+    if not response or not response.strip():
+        raise FormattingError(f"Model returned empty response for '{subtopic['title']}'")
+
+    data = _parse_json_response(response)
+
+    return FormattedNote(
+        title=data.get("title", subtopic["title"]),
+        tags=data.get("tags", []),
+        summary=subtopic.get("focus", ""),
+        body=data.get("markdown", ""),
+        source=extracted.source,
+        source_type=extracted.source_type,
+        metadata=extracted.metadata,
+    )
 
 
 def _build_style_injection(style: dict | None) -> str:
@@ -401,70 +515,6 @@ def _stage_a_decompose(text: str, extracted: ExtractedContent) -> dict[str, Any]
             )
 
     return data
-
-
-def _stage_b_generate_subtopic(
-    subtopic: dict[str, str],
-    parent_topic: str,
-    parent_summary: str,
-    all_titles: list[str],
-    style_injection: str,
-    extracted: ExtractedContent,
-) -> FormattedNote:
-    """Stage B: Generate a single atomic note for one subtopic."""
-    sibling_titles = [t for t in all_titles if t != subtopic["title"]]
-    siblings_str = "\n".join(f"- [[{t}]]" for t in sibling_titles)
-
-    system = (
-        "You are writing an atomic Obsidian note. An atomic note covers "
-        "ONLY one specific concept — nothing else."
-    )
-    prompt = (
-        f"Write an atomic Obsidian note about this specific topic.\n\n"
-        f"Topic: {subtopic['title']}\n"
-        f"Focus: {subtopic.get('focus', '')}\n"
-        f"Source material: {subtopic.get('relevant_section', '')}\n"
-        f"Overall source context: {parent_summary}\n\n"
-        "All other notes being created from this same source:\n"
-        f"{siblings_str}\n\n"
-        "Rules:\n"
-        "- Cover ONLY the stated topic — nothing else\n"
-        "- Length: 100-300 words of actual content\n"
-        "- Use [[wikilinks]] to link to the other notes listed above "
-        "wherever they are genuinely relevant\n"
-        f"- Link back to the parent index note: [[{parent_topic}]]\n"
-        "- End with a ## Links section listing all sibling note links\n\n"
-        f"{style_injection}\n\n"
-        "Return ONLY a JSON object:\n"
-        "{\n"
-        '  "title": "exact note title",\n'
-        '  "slug": "kebab-case-filename",\n'
-        '  "tags": ["tag1", "tag2"],\n'
-        '  "markdown": "complete note content including any frontmatter"\n'
-        "}"
-    )
-
-    try:
-        response = complete(prompt, system=system)
-    except Exception as exc:
-        raise FormattingError(
-            f"Model call failed generating note for '{subtopic['title']}': {exc}"
-        ) from exc
-
-    if not response or not response.strip():
-        raise FormattingError(f"Model returned empty response for '{subtopic['title']}'")
-
-    data = _parse_json_response(response)
-
-    return FormattedNote(
-        title=data.get("title", subtopic["title"]),
-        tags=data.get("tags", []),
-        summary=subtopic.get("focus", ""),
-        body=data.get("markdown", ""),
-        source=extracted.source,
-        source_type=extracted.source_type,
-        metadata=extracted.metadata,
-    )
 
 
 def _generate_parent_index(

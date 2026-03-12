@@ -219,6 +219,70 @@ def complete(prompt: str, system: str = "", model: str = "") -> str:
     return content or ""
 
 
+async def async_complete(prompt: str, system: str = "", model: str = "") -> str:
+    """Send an async chat completion request via litellm and return the response text.
+
+    Functionally identical to :func:`complete` but uses ``litellm.acompletion``
+    internally, making it safe to call concurrently inside an ``asyncio`` event
+    loop with ``asyncio.gather``.
+
+    Parameters
+    ----------
+    prompt:
+        The user message to send.
+    system:
+        Optional system message prepended to the conversation.
+    model:
+        The litellm model identifier.  Falls back to the configured default
+        when empty.
+
+    Returns
+    -------
+    str
+        The text content of the first completion choice.
+
+    Raises
+    ------
+    ModelError
+        If the underlying litellm call fails for any reason, including
+        authentication errors when an API key is missing or invalid.
+    """
+    if not model:
+        model = get_config().model
+
+    messages: list[dict[str, str]] = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+
+    is_local = model.startswith(OLLAMA_PREFIX)
+    timeout = _LOCAL_COMPLETION_TIMEOUT if is_local else _COMPLETION_TIMEOUT
+    kwargs: dict[str, Any] = {"model": model, "messages": messages, "timeout": timeout}
+    if is_local:
+        kwargs["api_base"] = OLLAMA_BASE_URL
+
+    try:
+        inject_api_keys()
+        response = await litellm.acompletion(**kwargs)
+    except litellm.AuthenticationError as exc:
+        provider = _detect_provider(model)
+        url = PROVIDER_KEY_URLS.get(provider, "")
+        msg = f"API key missing or invalid for {provider}"
+        if url:
+            msg += f"\n\n  Fix it with:\n    shard model key {provider}\n\n  Get a key at: {url}"
+        raise ModelError(msg) from exc
+    except Exception as exc:
+        logger.error("litellm async completion failed for model %s: %s", model, exc)
+        raise ModelError(f"Model completion failed ({model}): {exc}") from exc
+
+    try:
+        content: str = response.choices[0].message.content  # type: ignore[union-attr]
+    except (AttributeError, IndexError, TypeError) as exc:
+        raise ModelError(f"Unexpected response structure from {model}") from exc
+
+    return content or ""
+
+
 def detect_available_models() -> list[str]:
     """Detect locally-running Ollama models.
 
