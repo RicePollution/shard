@@ -408,4 +408,36 @@ def list_models() -> list[dict[str, Any]]:
                 "free": False,
             })
 
+    # Merge live-discovered cloud models not already in the catalog
+    from shard.models_cache import get_live_models
+
+    try:
+        live = get_live_models()
+    except Exception as exc:
+        logger.debug("get_live_models() failed: %s", exc)
+        live = {}
+
+    for provider, model_names in live.items():
+        has_key = bool(cfg.api_keys.get(provider)) or bool(
+            os.environ.get(PROVIDER_ENV_MAP.get(provider, ""))
+        )
+        for model_name in model_names:
+            if model_name in seen:
+                continue
+            seen.add(model_name)
+            # Strip provider prefix for the display label (e.g. "groq/llama3-70b" -> "llama3-70b")
+            label = model_name
+            if "/" in label:
+                label = label.split("/", 1)[1]
+            results.append({
+                "name": model_name,
+                "label": label,
+                "tier": "cloud",
+                "provider": provider,
+                "current": model_name == current_model,
+                "pulled": None,
+                "has_key": has_key,
+                "free": False,
+            })
+
     return results
