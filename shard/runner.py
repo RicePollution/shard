@@ -15,6 +15,7 @@ def run_add_pipeline(
     input_str: str,
     config: ShardConfig | None = None,
     single: bool = False,
+    instruction: str = "",
 ) -> list[IndexedNote]:
     """Run the full add pipeline: extract → format → save → index.
 
@@ -26,6 +27,9 @@ def run_add_pipeline(
         Optional config override; defaults to :func:`~shard.config.get_config`.
     single:
         When True, bypasses atomic splitting and generates a single note.
+    instruction:
+        Optional custom instruction injected into model prompts to guide
+        how the content is processed.
 
     Returns
     -------
@@ -46,7 +50,7 @@ def run_add_pipeline(
         source_label = extracted.source_type.name.lower()
 
         status.update(f"Formatting {source_label} content...")
-        formatted_notes = format_notes(extracted, single=single, on_status=status.update)
+        formatted_notes = format_notes(extracted, single=single, on_status=status.update, instruction=instruction)
 
         status.update("Loading search index...")
         client = get_redis_client(config)

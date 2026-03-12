@@ -41,13 +41,16 @@ information logically and make it easy to scan and reference later.\
 """
 
 
-def format_note(extracted: ExtractedContent) -> FormattedNote:
+def format_note(extracted: ExtractedContent, instruction: str = "") -> FormattedNote:
     """Format extracted content into a structured note via an LLM.
 
     Parameters
     ----------
     extracted:
         The raw extracted content to format.
+    instruction:
+        Optional custom instruction injected into the model prompt to guide
+        how the content is processed.
 
     Returns
     -------
@@ -60,7 +63,7 @@ def format_note(extracted: ExtractedContent) -> FormattedNote:
         If the model call fails or the response cannot be parsed.
     """
     text = _truncate(extracted.text)
-    system, prompt = _build_prompt(extracted, text)
+    system, prompt = _build_prompt(extracted, text, instruction=instruction)
 
     try:
         response = complete(prompt, system=system)
@@ -85,7 +88,7 @@ def format_note(extracted: ExtractedContent) -> FormattedNote:
     )
 
 
-def _build_prompt(extracted: ExtractedContent, text: str) -> tuple[str, str]:
+def _build_prompt(extracted: ExtractedContent, text: str, instruction: str = "") -> tuple[str, str]:
     """Build the system prompt and user prompt for note formatting.
 
     If a style profile exists at ``~/.shard/style.json``, uses a styled
@@ -183,6 +186,10 @@ def _build_prompt(extracted: ExtractedContent, text: str) -> tuple[str, str]:
     if extracted.title:
         prompt += f"Original title: {extracted.title}\n"
     prompt += f"\n---\n\n{text}"
+
+    if instruction:
+        prompt += f"\n\nSPECIAL INSTRUCTION FROM USER:\n{instruction}\n"
+        prompt += "Let this instruction guide the content, structure, and focus of the note.\n"
 
     return system, prompt
 
@@ -314,6 +321,7 @@ def format_notes(
     extracted: ExtractedContent,
     single: bool = False,
     on_status: Callable[[str], None] | None = None,
+    instruction: str = "",
 ) -> list[FormattedNote]:
     """Format extracted content into one or more structured notes.
 
@@ -324,6 +332,9 @@ def format_notes(
     single:
         When True, bypasses atomic splitting and returns a single note
         (wrapped in a list for a uniform return type).
+    instruction:
+        Optional custom instruction injected into model prompts to guide
+        how the content is processed.
 
     Returns
     -------
@@ -332,13 +343,14 @@ def format_notes(
         atomic notes plus a parent index note.
     """
     if single:
-        return [format_note(extracted)]
-    return _format_atomic_notes(extracted, on_status=on_status)
+        return [format_note(extracted, instruction=instruction)]
+    return _format_atomic_notes(extracted, on_status=on_status, instruction=instruction)
 
 
 def _format_atomic_notes(
     extracted: ExtractedContent,
     on_status: Callable[[str], None] | None = None,
+    instruction: str = "",
 ) -> list[FormattedNote]:
     """Split extracted content into multiple atomic notes via a two-stage LLM process.
 
@@ -353,7 +365,7 @@ def _format_atomic_notes(
     # ── Stage A: Topic decomposition ──
     if on_status:
         on_status("Decomposing into subtopics...")
-    decomposition = _stage_a_decompose(text, extracted)
+    decomposition = _stage_a_decompose(text, extracted, instruction=instruction)
 
     parent_topic = decomposition["parent_topic"]
     parent_summary = decomposition["parent_summary"]
@@ -363,7 +375,7 @@ def _format_atomic_notes(
     if len(subtopics) > 5:
         subtopics = subtopics[:5]
     if len(subtopics) < 3:
-        return [format_note(extracted)]
+        return [format_note(extracted, instruction=instruction)]
 
     all_titles = [st["title"] for st in subtopics]
 
@@ -373,7 +385,7 @@ def _format_atomic_notes(
 
     notes = asyncio.run(_generate_subtopics_concurrent(
         subtopics, parent_topic, parent_summary, all_titles,
-        style_injection, extracted,
+        style_injection, extracted, instruction=instruction,
     ))
 
     # ── Parent index note ──
@@ -382,7 +394,7 @@ def _format_atomic_notes(
 
     parent_note = _generate_parent_index(
         parent_topic, parent_summary, subtopics, notes,
-        style_injection, extracted,
+        style_injection, extracted, instruction=instruction,
     )
 
     # Parent first, then subtopics
@@ -396,6 +408,7 @@ async def _generate_subtopics_concurrent(
     all_titles: list[str],
     style_injection: str,
     extracted: ExtractedContent,
+    instruction: str = "",
 ) -> list[FormattedNote]:
     """Run Stage B note generation concurrently with a semaphore-capped concurrency.
 
@@ -408,7 +421,7 @@ async def _generate_subtopics_concurrent(
         async with sem:
             return await _stage_b_generate_subtopic_async(
                 subtopic, parent_topic, parent_summary, all_titles,
-                style_injection, extracted,
+                style_injection, extracted, instruction=instruction,
             )
 
     tasks = [generate_one(st) for st in subtopics]
@@ -427,7 +440,7 @@ async def _generate_subtopics_concurrent(
             try:
                 result = await _stage_b_generate_subtopic_async(
                     subtopic, parent_topic, parent_summary, all_titles,
-                    style_injection, extracted,
+                    style_injection, extracted, instruction=instruction,
                 )
             except Exception as exc:
                 raise FormattingError(
@@ -445,6 +458,7 @@ async def _stage_b_generate_subtopic_async(
     all_titles: list[str],
     style_injection: str,
     extracted: ExtractedContent,
+    instruction: str = "",
 ) -> FormattedNote:
     """Async variant of :func:`_stage_b_generate_subtopic` using ``async_complete``."""
     sibling_titles = [t for t in all_titles if t != subtopic["title"]]
@@ -470,6 +484,11 @@ async def _stage_b_generate_subtopic_async(
         f"- Link back to the parent index note: [[{parent_topic}]]\n"
         "- End with a ## Links section listing all sibling note links\n\n"
         f"{style_injection}\n\n"
+    )
+    if instruction:
+        prompt += f"SPECIAL INSTRUCTION FROM USER:\n{instruction}\n"
+        prompt += "This instruction must shape the content, structure, and focus of this note.\n\n"
+    prompt += (
         "Return ONLY a JSON object:\n"
         "{\n"
         '  "title": "exact note title",\n'
@@ -561,7 +580,7 @@ def _build_style_injection(style: dict[str, Any] | None) -> str:
     )
 
 
-def _stage_a_decompose(text: str, extracted: ExtractedContent) -> dict[str, Any]:
+def _stage_a_decompose(text: str, extracted: ExtractedContent, instruction: str = "") -> dict[str, Any]:
     """Stage A: Identify distinct subtopics in the content."""
     system = (
         "You are building an Obsidian knowledge vault using atomic notes. "
@@ -570,6 +589,11 @@ def _stage_a_decompose(text: str, extracted: ExtractedContent) -> dict[str, Any]
     prompt = (
         "Read this content carefully:\n\n"
         f"{text}\n\n"
+    )
+    if instruction:
+        prompt += f"SPECIAL INSTRUCTION FROM USER:\n{instruction}\n"
+        prompt += "Let this instruction guide which subtopics you identify and how you frame each one.\n\n"
+    prompt += (
         "Identify every distinct concept, subtopic, or idea in this content "
         "that deserves its own dedicated note. Think of these as the "
         "fundamental building blocks.\n\n"
@@ -633,6 +657,7 @@ def _generate_parent_index(
     child_notes: list[FormattedNote],
     style_injection: str,
     extracted: ExtractedContent,
+    instruction: str = "",
 ) -> FormattedNote:
     """Generate the parent index (MOC) note linking to all child notes."""
     children_str = "\n".join(
@@ -659,6 +684,11 @@ def _generate_parent_index(
         "- Be clearly an index/MOC (map of content) note\n"
         "- Use the tag #index or #moc\n\n"
         f"{style_injection}\n\n"
+    )
+    if instruction:
+        prompt += f"SPECIAL INSTRUCTION FROM USER:\n{instruction}\n"
+        prompt += "Let this instruction guide the content, structure, and focus of this note.\n\n"
+    prompt += (
         "Return ONLY a JSON object:\n"
         "{\n"
         '  "title": "parent note title",\n'

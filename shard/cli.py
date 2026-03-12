@@ -62,7 +62,12 @@ def cli(ctx: click.Context) -> None:
     default=False,
     help="Generate one note instead of splitting into atomic notes.",
 )
-def add(input: str, single: bool) -> None:
+@click.option(
+    "--instruction", "-i",
+    default="",
+    help="Custom instruction for how the model should process the content.",
+)
+def add(input: str, single: bool, instruction: str) -> None:
     """Add a note from a file path, URL, or raw text.
 
     INPUT can be a local file path (PDF or text), a web URL, a YouTube URL,
@@ -76,7 +81,7 @@ def add(input: str, single: bool) -> None:
 
     try:
         config = get_config()
-        indexed_notes = run_add_pipeline(input, config=config, single=single)
+        indexed_notes = run_add_pipeline(input, config=config, single=single, instruction=instruction)
     except ShardError as exc:
         _err.print(f"[bold red]Error:[/bold red] {exc}")
         sys.exit(1)
