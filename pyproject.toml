@@ -12,8 +12,9 @@ requires-python = ">=3.11"
 dependencies = [
     "litellm",
     "click",
-    "python-dotenv",
     "redis>=5.0.0",
+    "numpy",
+    "requests",
     "sentence-transformers",
     "pdfplumber",
     "httpx",

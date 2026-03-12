@@ -23,9 +23,6 @@ from shard.pipeline import ConfigError
 
 CONFIG_PATH: Path = Path.home() / ".config" / "shard" / "config.json"
 
-# Kept for migration detection only — not used by any active code path.
-DEFAULT_CHROMA_PATH: Path = Path.home() / ".local" / "share" / "shard" / "chroma"
-
 DEFAULT_MODEL: str = "ollama_chat/qwen2.5:3b"
 DEFAULT_EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
 OLLAMA_BASE_URL: str = "http://localhost:11434"
@@ -349,48 +346,10 @@ def _fetch_ollama_models() -> list[str] | None:
 
 
 def _pull_ollama_model(model_name: str) -> bool:
-    """Pull *model_name* from the Ollama registry with a Rich progress spinner.
+    """Pull *model_name* via :func:`shard.models.pull_ollama_model`."""
+    from shard.models import pull_ollama_model
 
-    The pull request is streamed; each newline-delimited JSON chunk is
-    consumed and the spinner label is updated with the ``status`` field so the
-    user sees live progress.
-
-    Args:
-        model_name: The model tag to pull (e.g. ``"qwen2.5:3b"``).
-
-    Returns:
-        ``True`` if the pull completed without an HTTP error, ``False``
-        otherwise.
-    """
-    try:
-        with _console.status(
-            f"[bold cyan]Pulling {model_name} from Ollama...[/bold cyan]",
-            spinner="dots",
-        ) as spinner:
-            with httpx.stream(
-                "POST",
-                f"{OLLAMA_BASE_URL}/api/pull",
-                json={"name": model_name},
-                timeout=None,  # pulls can take minutes
-            ) as response:
-                response.raise_for_status()
-                for line in response.iter_lines():
-                    if not line:
-                        continue
-                    try:
-                        chunk: dict[str, Any] = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    status_text = chunk.get("status", "")
-                    if status_text:
-                        spinner.update(
-                            f"[bold cyan]{model_name}:[/bold cyan] {status_text}"
-                        )
-        _console.print(f"[green]Model '{model_name}' pulled successfully.[/green]")
-        return True
-    except (httpx.RequestError, httpx.HTTPStatusError) as exc:
-        _console.print(f"[red]Failed to pull model '{model_name}': {exc}[/red]")
-        return False
+    return pull_ollama_model(model_name)
 
 
 # ── Interactive setup ─────────────────────────────────────────────────────────
