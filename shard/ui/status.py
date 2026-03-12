@@ -28,7 +28,12 @@ class StatusFeed:
     """
 
     def __init__(self) -> None:
-        self._is_tty = hasattr(sys.stderr, "isatty") and sys.stderr.isatty()
+        import os
+        self._is_tty = (
+            (hasattr(sys.stderr, "isatty") and sys.stderr.isatty())
+            or (hasattr(sys.stdout, "isatty") and sys.stdout.isatty())
+            or os.environ.get("TERM") not in (None, "dumb")
+        )
         self._spinner_index = 0
         self._lock = threading.Lock()
         self._active = False
