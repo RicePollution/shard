@@ -7,3 +7,4 @@ dist/
 .chroma/
 .pytest_cache/
 build/
+tests/
